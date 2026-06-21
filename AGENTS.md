@@ -27,8 +27,9 @@ dotnet test RealTimeWeatherMod.Tests/RealTimeWeatherMod.Tests.csproj
 - `ChillEnvPlugin.Awake()`  插件入口：Harmony PatchAll → InitConfig → 创建隐藏 GO (`ChillEnvSyncRunner`) 挂载 3 个 MonoBehaviour
 - Harmony 自动扫描补丁 + 手动 `UnlockConditionGodMode.ApplyPatches()`
 - 三种 MonoBehaviour：`AutoEnvRunner`（天气轮询+环境切换）、`SceneryAutomationSystem`（彩蛋规则）、`ModSettingsIntegration`（设置面板集成）
+- `WeatherService` 统一调度双数据源（`Seniverse`/`OpenMeteo`），`OpenMeteoWeatherMapper` 将 OpenMeteo weather_code 映射为心知 code
 - 版本号集中管理：`ChillEnvPlugin.PluginVersion`（当前 `5.2.3`）
-- API：心知天气 Seniverse（非 OpenWeather），`SeniverseKey` 留空使用内置 Key
+- API：心知天气 Seniverse（需 API Key 或内置 Key）+ OpenMeteo（无需 Key，填写经纬度即可）。设置面板可切换数据源
 
 ## 反射桥接的游戏类型
 
