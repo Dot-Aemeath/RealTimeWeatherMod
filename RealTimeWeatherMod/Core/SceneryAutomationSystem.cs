@@ -14,6 +14,7 @@ namespace ChillWithYou.EnvSync.Core
     public static HashSet<EnvironmentType> UserInteractedMods = new HashSet<EnvironmentType>();
     internal static bool IsSystemOperation = false;
     internal static float InitializationTime;
+    internal static bool IsUserInteractionTrackingReady { get; private set; }
 
     // --- 核心修复：点击冷却 + 延迟验证 ---
     private Dictionary<EnvironmentType, float> _lastClickTime = new Dictionary<EnvironmentType, float>();
@@ -21,6 +22,8 @@ namespace ChillWithYou.EnvSync.Core
 
     private const float ClickCooldown = 2.0f;      // 点击冷却
     private const float VerifyDelay = 0.5f;        // 点击后延迟验证的时间
+    private const float UserInteractionQuietPeriod = 5.0f;
+    private static float _lastEnvironmentControllerSetupTime;
 
     private class PendingAction
     {
@@ -32,7 +35,8 @@ namespace ChillWithYou.EnvSync.Core
     private class SceneryRule
     {
       public EnvironmentType EnvType;
-      public Func<bool> Condition;
+      public Func<bool> ShouldBeActive;
+      public Func<bool> TryTrigger;
       public string Name;
       public SceneryRuleCategory Category = SceneryRuleCategory.SeasonalScenery;
     }
@@ -64,18 +68,18 @@ namespace ChillWithYou.EnvSync.Core
     private const EnvironmentType Env_Whale = EnvironmentType.Whale;
 
     // 概率触发相关状态
-    private System.Random _random = new System.Random();
-    private DateTime _lastDailyCheck = DateTime.MinValue;
-    private bool _windBellTriggeredToday = false;
-    private bool _windBellRollDoneToday = false;
-    private bool _hotSpringTriggeredToday = false;
-    private bool _hotSpringRollDoneToday = false;
-    private bool _whaleTriggeredToday = false;
-    private bool _whaleRollDoneToday = false; // 标记今天是否已经抽过鲸鱼
-    private bool _spaceTriggeredToday = false;
-    private bool _spaceRollDoneToday = false;
-    private bool _blueButterflyTriggeredToday = false;
-    private DateTime _blueButterflyStartTime = DateTime.MinValue;
+    private static System.Random _random = new System.Random();
+    private static DateTime _lastDailyCheck = DateTime.MinValue;
+    private static bool _windBellTriggeredToday = false;
+    private static bool _windBellRollDoneToday = false;
+    private static bool _hotSpringTriggeredToday = false;
+    private static bool _hotSpringRollDoneToday = false;
+    private static bool _whaleTriggeredToday = false;
+    private static bool _whaleRollDoneToday = false;
+    private static bool _spaceTriggeredToday = false;
+    private static bool _spaceRollDoneToday = false;
+    private static bool _blueButterflyTriggeredToday = false;
+    private static DateTime _blueButterflyStartTime = DateTime.MinValue;
     
     // 鲸鱼专属标志：标记当前鲸鱼是否为系统抽中（而非用户手动开启）
     internal static bool IsWhaleSystemTriggered = false;
@@ -83,9 +87,46 @@ namespace ChillWithYou.EnvSync.Core
     private void Start()
     {
       InitializationTime = Time.realtimeSinceStartup;
+      _lastEnvironmentControllerSetupTime = InitializationTime;
+      IsUserInteractionTrackingReady = false;
+      ResetTriggerStateDefaults();
       InitializeRules();
       RestoreManagedOwnership();
+      RestoreTriggerState();
       LoadUserInteractedMods();
+    }
+
+    private static void ResetTriggerStateDefaults()
+    {
+      _windBellTriggeredToday = false;
+      _windBellRollDoneToday = false;
+      _hotSpringTriggeredToday = false;
+      _hotSpringRollDoneToday = false;
+      _whaleTriggeredToday = false;
+      _whaleRollDoneToday = false;
+      _spaceTriggeredToday = false;
+      _spaceRollDoneToday = false;
+      _blueButterflyTriggeredToday = false;
+      _blueButterflyStartTime = DateTime.MinValue;
+      IsWhaleSystemTriggered = false;
+      _lastDailyCheck = DateTime.MinValue;
+    }
+
+    internal static void NotifyEnvironmentControllerSetup()
+    {
+      _lastEnvironmentControllerSetupTime = Time.realtimeSinceStartup;
+      IsUserInteractionTrackingReady = false;
+    }
+
+    private void UpdateUserInteractionTrackingReadiness()
+    {
+      if (IsUserInteractionTrackingReady || EnvRegistry.Count == 0) return;
+
+      float readyBaseline = Math.Max(InitializationTime, _lastEnvironmentControllerSetupTime);
+      if (Time.realtimeSinceStartup - readyBaseline < UserInteractionQuietPeriod) return;
+
+      IsUserInteractionTrackingReady = true;
+      ChillEnvPlugin.Log?.LogDebug("[用户交互] 环境加载已稳定，开始追踪用户操作");
     }
 
     private void InitializeRules()
@@ -95,12 +136,12 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "Fireworks",
         EnvType = Env_Fireworks,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           DateTime now = DateTime.Now;
           bool isNight = IsNight();
-          bool isGregorianNewYear = (now.Month == 1 && now.Day == 1); // 公历元旦
-          bool isLunarNewYear = IsLunarNewYearPeriod(now); // 农历春节期间
+          bool isGregorianNewYear = (now.Month == 1 && now.Day == 1);
+          bool isLunarNewYear = IsLunarNewYearPeriod(now);
           return isNight && (isGregorianNewYear || isLunarNewYear);
         }
       });
@@ -111,7 +152,7 @@ namespace ChillWithYou.EnvSync.Core
         Name = "CookingAudio",
         EnvType = Env_Cooking,
         Category = SceneryRuleCategory.AmbientSound,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           int h = DateTime.Now.Hour;
           int m = DateTime.Now.Minute;
@@ -126,7 +167,7 @@ namespace ChillWithYou.EnvSync.Core
         Name = "AC_Audio",
         EnvType = Env_AC,
         Category = SceneryRuleCategory.AmbientSound,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           var w = WeatherService.CachedWeather;
           if (w == null) return false;
@@ -139,7 +180,7 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "Sakura",
         EnvType = Env_Sakura,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           int month = DateTime.Now.Month;
           return month >= 3 && month <= 4 && IsDay() && IsGoodWeather();
@@ -152,7 +193,7 @@ namespace ChillWithYou.EnvSync.Core
         Name = "Cicadas",
         EnvType = Env_Cicada,
         Category = SceneryRuleCategory.AmbientSound,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           return GetSeason() == Season.Summer && IsDay() && IsGoodWeather();
         }
@@ -163,26 +204,25 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "Space",
         EnvType = Env_Space,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
-          CheckDailyReset();
           if (!IsNight() || !IsGoodWeather()) return false;
-          
-          if (_spaceTriggeredToday)
-            return true; // 今天已触发，保持开启
-          
-          // 今天还没抽过，进行一次抽奖
-          if (!_spaceRollDoneToday)
+          return _spaceTriggeredToday;
+        },
+        TryTrigger = () =>
+        {
+          if (!IsNight() || !IsGoodWeather()) return false;
+          if (_spaceTriggeredToday) return true;
+          if (_spaceRollDoneToday) return false;
+
+          _spaceRollDoneToday = true;
+          if (_random.NextDouble() < 0.01)
           {
-            _spaceRollDoneToday = true;
-            
-            if (_random.NextDouble() < 0.01) // 1% 概率（晴朗夜晚前提下，一年约2次）
-            {
-              _spaceTriggeredToday = true;
-              return true;
-            }
+            _spaceTriggeredToday = true;
+            PersistTriggerState();
+            return true;
           }
-          
+          PersistTriggerState();
           return false;
         }
       });
@@ -192,7 +232,7 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "Locomotive",
         EnvType = Env_Locomotive,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           DateTime now = DateTime.Now;
           bool isChristmas = (now.Month == 12 && (now.Day == 24 || now.Day == 25));
@@ -205,7 +245,7 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "Balloon",
         EnvType = Env_Balloon,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           DateTime now = DateTime.Now;
           bool isChildrensDay = (now.Month == 6 && now.Day == 1);
@@ -218,7 +258,7 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "Books",
         EnvType = Env_Books,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
           DateTime now = DateTime.Now;
           bool isBookDay = (now.Month == 4 && now.Day == 23);
@@ -232,42 +272,37 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "BlueButterfly",
         EnvType = Env_BlueButterfly,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
-          CheckDailyReset();
           DateTime now = DateTime.Now;
           int month = now.Month;
-          
           if (month < 5 || month > 6 || !IsNight() || !IsGoodWeather())
             return false;
-          
-          // 如果已经触发过，检查是否超过20分钟
-          if (_blueButterflyTriggeredToday)
-          {
-            if (_autoEnabledMods.Contains(Env_BlueButterfly))
-            {
-              // 检查是否已经开启超过20分钟
-              if ((DateTime.Now - _blueButterflyStartTime).TotalMinutes >= 20)
-              {
-                return false; // 超时，应该关闭
-              }
-              return true; // 继续保持开启
-            }
-            return false; // 今天已触发过且已关闭
-          }
-          
-          // 每20分钟一段计算触发概率
+          if (!_blueButterflyTriggeredToday) return false;
+          if (!_autoEnabledMods.Contains(Env_BlueButterfly)) return false;
+          if ((DateTime.Now - _blueButterflyStartTime).TotalMinutes >= 20)
+            return false;
+          return true;
+        },
+        TryTrigger = () =>
+        {
+          DateTime now = DateTime.Now;
+          int month = now.Month;
+          if (month < 5 || month > 6 || !IsNight() || !IsGoodWeather())
+            return false;
+          if (_blueButterflyTriggeredToday) return false;
+
           int currentSegment = (now.Hour * 60 + now.Minute) / 20;
           int seed = now.Year * 10000 + now.DayOfYear * 100 + currentSegment;
           var segmentRandom = new System.Random(seed);
-          
-          if (segmentRandom.NextDouble() < 0.15) // 15%概率
+
+          if (segmentRandom.NextDouble() < 0.15)
           {
             _blueButterflyTriggeredToday = true;
             _blueButterflyStartTime = DateTime.Now;
+            PersistTriggerState();
             return true;
           }
-          
           return false;
         }
       });
@@ -277,30 +312,31 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "WindBell",
         EnvType = Env_WindBell,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
-          CheckDailyReset();
           DateTime now = DateTime.Now;
           int month = now.Month;
-          
           if (month < 7 || month > 8 || !IsGoodWeather())
             return false;
-          
-          if (_windBellTriggeredToday)
-            return true; // 今天已触发，保持开启
-          
-          // 今天还没抽过，进行一次抽奖
-          if (!_windBellRollDoneToday)
+          return _windBellTriggeredToday;
+        },
+        TryTrigger = () =>
+        {
+          DateTime now = DateTime.Now;
+          int month = now.Month;
+          if (month < 7 || month > 8 || !IsGoodWeather())
+            return false;
+          if (_windBellTriggeredToday) return true;
+          if (_windBellRollDoneToday) return false;
+
+          _windBellRollDoneToday = true;
+          if (_random.NextDouble() < 0.05)
           {
-            _windBellRollDoneToday = true;
-            
-            if (_random.NextDouble() < 0.05) // 5%概率
-            {
-              _windBellTriggeredToday = true;
-              return true;
-            }
+            _windBellTriggeredToday = true;
+            PersistTriggerState();
+            return true;
           }
-          
+          PersistTriggerState();
           return false;
         }
       });
@@ -310,35 +346,35 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "HotSpring",
         EnvType = Env_HotSpring,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
-          CheckDailyReset();
           DateTime now = DateTime.Now;
           int month = now.Month;
-          
           if (!((month >= 11 && month <= 12) || (month >= 1 && month <= 2)) || !IsGoodWeather())
             return false;
-          
-          if (_hotSpringTriggeredToday)
-            return true; // 今天已触发，保持开启
-          
-          // 今天还没抽过，进行一次抽奖
-          if (!_hotSpringRollDoneToday)
+          return _hotSpringTriggeredToday;
+        },
+        TryTrigger = () =>
+        {
+          DateTime now = DateTime.Now;
+          int month = now.Month;
+          if (!((month >= 11 && month <= 12) || (month >= 1 && month <= 2)) || !IsGoodWeather())
+            return false;
+          if (_hotSpringTriggeredToday) return true;
+          if (_hotSpringRollDoneToday) return false;
+
+          _hotSpringRollDoneToday = true;
+          var w = WeatherService.CachedWeather;
+          bool isSnowing = (w != null && w.Code >= 13 && w.Code <= 17);
+          double probability = isSnowing ? 0.30 : 0.05;
+
+          if (_random.NextDouble() < probability)
           {
-            _hotSpringRollDoneToday = true;
-            
-            // 下雪时概率大幅提升至30%
-            var w = WeatherService.CachedWeather;
-            bool isSnowing = (w != null && w.Code >= 13 && w.Code <= 17); // 雪的天气代码
-            double probability = isSnowing ? 0.30 : 0.05;
-            
-            if (_random.NextDouble() < probability)
-            {
-              _hotSpringTriggeredToday = true;
-              return true;
-            }
+            _hotSpringTriggeredToday = true;
+            PersistTriggerState();
+            return true;
           }
-          
+          PersistTriggerState();
           return false;
         }
       });
@@ -348,30 +384,25 @@ namespace ChillWithYou.EnvSync.Core
       {
         Name = "Whale",
         EnvType = Env_Whale,
-        Condition = () =>
+        ShouldBeActive = () =>
         {
-          CheckDailyReset();
-          
-          if (_whaleTriggeredToday)
-            return true; // 今天已触发，保持开启（无视天气）
-          
-          // 今天还没抽过，进行一次抽奖
-          if (!_whaleRollDoneToday)
+          return _whaleTriggeredToday;
+        },
+        TryTrigger = () =>
+        {
+          if (_whaleTriggeredToday) return true;
+          if (_whaleRollDoneToday) return false;
+
+          _whaleRollDoneToday = true;
+          if (_random.NextDouble() < 0.0005)
           {
-            _whaleRollDoneToday = true; // 标记已抽过
-            
-            if (_random.NextDouble() < 0.0005) // 0.05%概率
-            {
-              _whaleTriggeredToday = true;
-              IsWhaleSystemTriggered = true; // 标记为系统抽中
-              
-              // 不强制切换时段，黄昏和晚上的鲸鱼也很美
-              ChillEnvPlugin.Log?.LogWarning("[鲸鱼彩蛋] 系统抽中鲸鱼，保持当前时段...");
-              
-              return true;
-            }
+            _whaleTriggeredToday = true;
+            IsWhaleSystemTriggered = true;
+            PersistTriggerState();
+            ChillEnvPlugin.Log?.LogWarning("[鲸鱼彩蛋] 系统抽中鲸鱼，保持当前时段...");
+            return true;
           }
-          
+          PersistTriggerState();
           return false;
         }
       });
@@ -381,8 +412,11 @@ namespace ChillWithYou.EnvSync.Core
     {
       if (!ChillEnvPlugin.Initialized) return;
 
+      UpdateUserInteractionTrackingReadiness();
+
       // 处理延迟验证
       ProcessPendingActions();
+      FlushOwnershipIfDirty();
 
       if (!HasAnyAutomationEnabled())
       {
@@ -392,8 +426,6 @@ namespace ChillWithYou.EnvSync.Core
         }
         return;
       }
-
-      FlushOwnershipIfDirty();
 
       _checkTimer += Time.deltaTime;
       if (_checkTimer >= CheckInterval)
@@ -455,6 +487,7 @@ namespace ChillWithYou.EnvSync.Core
       // 剧情保护：剧情中跳过所有彩蛋自动切换
       if (ChillEnvPlugin.IsInCutscene()) return;
 
+      CheckDailyReset();
       CleanupDisabledAutoMods();
 
       if (IsEnvActive(Env_DeepSea))
@@ -484,7 +517,7 @@ namespace ChillWithYou.EnvSync.Core
           continue;
         }
 
-        if (!IsRuleEnabled(rule) || !rule.Condition())
+        if (!IsRuleEnabled(rule) || !rule.ShouldBeActive())
         {
           DisableMod(rule.Name, envType);
         }
@@ -503,7 +536,7 @@ namespace ChillWithYou.EnvSync.Core
         // 已经开着了就不管
         if (IsEnvActive(rule.EnvType)) continue;
 
-        if (rule.Condition())
+        if (rule.ShouldBeActive() || (rule.TryTrigger != null && rule.TryTrigger()))
         {
           EnableMod(rule.Name, rule.EnvType);
         }
@@ -519,7 +552,7 @@ namespace ChillWithYou.EnvSync.Core
         if (_pendingActions.ContainsKey(rule.EnvType)) continue;
 
         if (!IsEnvActive(rule.EnvType)) continue;
-        if (rule.Condition()) continue;
+        if (rule.ShouldBeActive()) continue;
 
         if (!IsRuleEnabled(rule))
         {
@@ -561,7 +594,7 @@ namespace ChillWithYou.EnvSync.Core
 
         if (SceneryAutomationCleanupPolicy.ShouldDisableManagedMod(
           IsRuleEnabled(rule),
-          rule.Condition()))
+          rule.ShouldBeActive()))
         {
           DisableMod(rule.Name, envType);
         }
@@ -698,7 +731,9 @@ namespace ChillWithYou.EnvSync.Core
         _spaceTriggeredToday = false;
         _spaceRollDoneToday = false;
         _blueButterflyTriggeredToday = false;
-        IsWhaleSystemTriggered = false; // 重置鲸鱼系统触发标志
+        _blueButterflyStartTime = DateTime.MinValue;
+        IsWhaleSystemTriggered = false;
+        PersistTriggerState();
         ChillEnvPlugin.Log?.LogDebug("[每日重置] 概率触发标志已重置");
       }
     }

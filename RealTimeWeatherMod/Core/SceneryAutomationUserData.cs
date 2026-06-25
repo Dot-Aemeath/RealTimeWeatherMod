@@ -76,8 +76,7 @@ namespace ChillWithYou.EnvSync.Core
                 var tempPath = path + ".tmp";
                 var backupPath = path + ".bak";
                 File.WriteAllText(tempPath, AutoManagedStateCodec.Serialize(names));
-                File.Replace(tempPath, path, backupPath);
-                try { File.Delete(backupPath); } catch { }
+                AtomicFileWriter.Commit(tempPath, path, backupPath);
                 return true;
             }
             catch (Exception ex)

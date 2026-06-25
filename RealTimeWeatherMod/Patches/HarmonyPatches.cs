@@ -25,6 +25,7 @@ namespace ChillWithYou.EnvSync.Patches
         static void Postfix(EnvironmentController __instance)
         {
             EnvRegistry.Register(__instance.EnvironmentType, __instance);
+            SceneryAutomationSystem.NotifyEnvironmentControllerSetup();
         }
     }
 
@@ -131,16 +132,18 @@ namespace ChillWithYou.EnvSync.Patches
     internal static class UserInteractionPatch
     {
         public static bool IsSimulatingClick = false;
-        private const float StartupGracePeriod = 5f;
 
         static void Prefix(EnvironmentController __instance)
         {
             if (IsSimulatingClick) return;
             if (SceneryAutomationSystem.IsSystemOperation) return;
 
-            // 启动宽限期：游戏刚加载时的内部调用不视为用户交互
-            if (Time.realtimeSinceStartup - SceneryAutomationSystem.InitializationTime < StartupGracePeriod)
+            // 环境控制器仍在初始化时，不把启动阶段的调用误判为用户操作。
+            // 安静期从最后一个控制器 Setup 完成后开始，兼容加载较慢的机器。
+            if (!SceneryAutomationSystem.IsUserInteractionTrackingReady)
+            {
                 return;
+            }
 
             EnvironmentType type = __instance.EnvironmentType;
             if (!SceneryAutomationSystem.UserInteractedMods.Contains(type))
