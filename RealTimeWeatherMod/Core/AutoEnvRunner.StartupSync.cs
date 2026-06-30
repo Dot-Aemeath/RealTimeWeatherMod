@@ -190,10 +190,9 @@ namespace ChillWithYou.EnvSync.Core
                 return;
             }
 
-            int changedCount;
             SceneryAutomationSystem.TryApplyStartupAmbientSoundState(
                 typedEnvironmentDataService,
-                out changedCount);
+                out _);
         }
 
         private EnvironmentType GetDesiredBaseEnvironment(SyncPolicySnapshot policy, WeatherInfo weather)

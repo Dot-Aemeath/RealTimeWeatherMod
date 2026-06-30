@@ -485,26 +485,39 @@ namespace ChillWithYou.EnvSync.Core
       _startupAmbientSoundSyncRunning = true;
       float timeout = StartupAmbientSoundSyncTimeout;
 
-      while (!_startupAmbientSoundSyncDone && timeout > 0f)
+      try
       {
-        EnvironmentDataService environmentDataService;
-        if (TryGetEnvironmentDataService(out environmentDataService))
+        while (!_startupAmbientSoundSyncDone && timeout > 0f)
         {
-          int changedCount;
-          TryApplyStartupAmbientSoundState(environmentDataService, out changedCount);
-          break;
+          try
+          {
+            EnvironmentDataService environmentDataService;
+            if (TryGetEnvironmentDataService(out environmentDataService))
+            {
+              TryApplyStartupAmbientSoundState(environmentDataService, out _);
+              break;
+            }
+          }
+          catch (Exception ex)
+          {
+            ChillEnvPlugin.Log?.LogWarning(
+              $"[启动同步] 环境音预同步异常，回退到常规定时器: {ex.Message}");
+            break;
+          }
+
+          yield return new WaitForSeconds(StartupAmbientSoundSyncInterval);
+          timeout -= StartupAmbientSoundSyncInterval;
         }
 
-        yield return new WaitForSeconds(StartupAmbientSoundSyncInterval);
-        timeout -= StartupAmbientSoundSyncInterval;
+        if (!_startupAmbientSoundSyncDone)
+        {
+          ChillEnvPlugin.Log?.LogDebug("[启动同步] 环境音数据服务未就绪，交给常规定时器兜底");
+        }
       }
-
-      if (!_startupAmbientSoundSyncDone)
+      finally
       {
-        ChillEnvPlugin.Log?.LogDebug("[启动同步] 环境音数据服务未就绪，交给常规定时器兜底");
+        _startupAmbientSoundSyncRunning = false;
       }
-
-      _startupAmbientSoundSyncRunning = false;
     }
 
     internal static bool TryApplyStartupAmbientSoundState(
@@ -556,7 +569,7 @@ namespace ChillWithYou.EnvSync.Core
         var field = envUI.GetType().GetField(
           "_environmentDataService",
           BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        if (field == null) return false;
+        if (field == null) continue;
 
         environmentDataService = field.GetValue(envUI) as EnvironmentDataService;
         return environmentDataService != null;
@@ -629,6 +642,7 @@ namespace ChillWithYou.EnvSync.Core
     {
       if (controller == null) return false;
 
+      string methodName = shouldBeActive ? "MuteDeactivate" : "MuteActivate";
       try
       {
         if (IsEnvActive(controller.EnvironmentType) == shouldBeActive)
@@ -637,7 +651,7 @@ namespace ChillWithYou.EnvSync.Core
         }
 
         var method = controller.GetType().GetMethod(
-          shouldBeActive ? "MuteDeactivate" : "MuteActivate",
+          methodName,
           BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         if (method == null)
         {
@@ -652,22 +666,22 @@ namespace ChillWithYou.EnvSync.Core
       catch (ArgumentException ex)
       {
         ChillEnvPlugin.Log?.LogWarning(
-          $"[自动托管] 环境音直连失败: {ruleName}: {ex.Message}");
+          $"[自动托管] 环境音直连失败({controller.GetType().Name}.{methodName}): {ruleName}: {ex.Message}");
       }
       catch (TargetException ex)
       {
         ChillEnvPlugin.Log?.LogWarning(
-          $"[自动托管] 环境音直连失败: {ruleName}: {ex.Message}");
+          $"[自动托管] 环境音直连失败({controller.GetType().Name}.{methodName}): {ruleName}: {ex.Message}");
       }
       catch (MethodAccessException ex)
       {
         ChillEnvPlugin.Log?.LogWarning(
-          $"[自动托管] 环境音直连失败: {ruleName}: {ex.Message}");
+          $"[自动托管] 环境音直连失败({controller.GetType().Name}.{methodName}): {ruleName}: {ex.Message}");
       }
       catch (TargetInvocationException ex)
       {
         ChillEnvPlugin.Log?.LogWarning(
-          $"[自动托管] 环境音直连失败: {ruleName}: {ex.InnerException?.Message ?? ex.Message}");
+          $"[自动托管] 环境音直连失败({controller.GetType().Name}.{methodName}): {ruleName}: {ex.InnerException?.Message ?? ex.Message}");
       }
 
       return false;
