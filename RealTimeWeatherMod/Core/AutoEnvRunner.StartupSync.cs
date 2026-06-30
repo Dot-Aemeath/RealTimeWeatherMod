@@ -182,6 +182,20 @@ namespace ChillWithYou.EnvSync.Core
             return windowViewService != null && environmentDataService != null;
         }
 
+        private void TryApplyStartupAmbientSoundSync(object environmentDataService)
+        {
+            var typedEnvironmentDataService = environmentDataService as EnvironmentDataService;
+            if (typedEnvironmentDataService == null)
+            {
+                return;
+            }
+
+            int changedCount;
+            SceneryAutomationSystem.TryApplyStartupAmbientSoundState(
+                typedEnvironmentDataService,
+                out changedCount);
+        }
+
         private EnvironmentType GetDesiredBaseEnvironment(SyncPolicySnapshot policy, WeatherInfo weather)
         {
             EnvironmentType target = GetBaseTimeEnvironmentOnly();
@@ -494,6 +508,11 @@ namespace ChillWithYou.EnvSync.Core
                 object windowViewService;
                 object environmentDataService;
                 bool runtimeReady = TryGetStartupRuntime(envUI, out windowViewService, out environmentDataService);
+                if (runtimeReady)
+                {
+                    TryApplyStartupAmbientSoundSync(environmentDataService);
+                }
+
                 bool weatherDecisionReady = weather != null || _startupWeatherFetchFinished;
                 bool needsSceneryControllers = policy.CanControlWeather && weather != null;
                 bool sceneryControllersReady = !needsSceneryControllers || AreSceneryControllersReady();

@@ -23,7 +23,14 @@ namespace ChillWithYou.EnvSync.Core
     private const float ClickCooldown = 2.0f;      // 点击冷却
     private const float VerifyDelay = 0.5f;        // 点击后延迟验证的时间
     private const float UserInteractionQuietPeriod = 5.0f;
+    private const float StartupAmbientSoundSyncInterval = 0.25f;
+    private const float StartupAmbientSoundSyncTimeout = 10f;
     private static float _lastEnvironmentControllerSetupTime;
+    private static SceneryAutomationSystem _instance;
+    private bool _startupAmbientSoundSyncRunning;
+    private bool _startupAmbientSoundSyncDone;
+    private bool _needsImmediateAutomationCheck = true;
+    private float _nextImmediateAutomationCheckTime;
 
     private class PendingAction
     {
@@ -86,6 +93,7 @@ namespace ChillWithYou.EnvSync.Core
 
     private void Start()
     {
+      _instance = this;
       InitializationTime = Time.realtimeSinceStartup;
       _lastEnvironmentControllerSetupTime = InitializationTime;
       IsUserInteractionTrackingReady = false;
@@ -94,6 +102,7 @@ namespace ChillWithYou.EnvSync.Core
       RestoreManagedOwnership();
       RestoreTriggerState();
       LoadUserInteractedMods();
+      StartCoroutine(EarlyAmbientSoundSync());
     }
 
     private static void ResetTriggerStateDefaults()
@@ -427,12 +436,241 @@ namespace ChillWithYou.EnvSync.Core
         return;
       }
 
+      if (TryRunImmediateAutomationCheck())
+      {
+        return;
+      }
+
       _checkTimer += Time.deltaTime;
       if (_checkTimer >= CheckInterval)
       {
         _checkTimer = 0f;
         RunAutomationLogic();
       }
+    }
+
+    private bool TryRunImmediateAutomationCheck()
+    {
+      if (!_needsImmediateAutomationCheck) return false;
+      if (Time.time < _nextImmediateAutomationCheckTime) return false;
+
+      _nextImmediateAutomationCheckTime = Time.time + StartupAmbientSoundSyncInterval;
+      if (!AreAmbientSoundControllersReady()) return false;
+      if (ChillEnvPlugin.IsInCutscene()) return false;
+
+      _needsImmediateAutomationCheck = false;
+      _checkTimer = 0f;
+      RunAutomationLogic();
+      return true;
+    }
+
+    private bool AreAmbientSoundControllersReady()
+    {
+      foreach (var rule in _rules)
+      {
+        if (rule.Category != SceneryRuleCategory.AmbientSound) continue;
+        if (!EnvRegistry.TryGet(rule.EnvType, out _)) return false;
+      }
+
+      return true;
+    }
+
+    private System.Collections.IEnumerator EarlyAmbientSoundSync()
+    {
+      if (_startupAmbientSoundSyncRunning || _startupAmbientSoundSyncDone)
+      {
+        yield break;
+      }
+
+      _startupAmbientSoundSyncRunning = true;
+      float timeout = StartupAmbientSoundSyncTimeout;
+
+      while (!_startupAmbientSoundSyncDone && timeout > 0f)
+      {
+        EnvironmentDataService environmentDataService;
+        if (TryGetEnvironmentDataService(out environmentDataService))
+        {
+          int changedCount;
+          TryApplyStartupAmbientSoundState(environmentDataService, out changedCount);
+          break;
+        }
+
+        yield return new WaitForSeconds(StartupAmbientSoundSyncInterval);
+        timeout -= StartupAmbientSoundSyncInterval;
+      }
+
+      if (!_startupAmbientSoundSyncDone)
+      {
+        ChillEnvPlugin.Log?.LogDebug("[启动同步] 环境音数据服务未就绪，交给常规定时器兜底");
+      }
+
+      _startupAmbientSoundSyncRunning = false;
+    }
+
+    internal static bool TryApplyStartupAmbientSoundState(
+      EnvironmentDataService environmentDataService,
+      out int changedCount)
+    {
+      changedCount = 0;
+
+      var instance = _instance;
+      if (instance == null || environmentDataService == null)
+      {
+        return false;
+      }
+
+      if (instance._startupAmbientSoundSyncDone)
+      {
+        return true;
+      }
+
+      changedCount = instance.ApplyStartupAmbientSoundState(environmentDataService);
+      instance._startupAmbientSoundSyncDone = true;
+      instance._needsImmediateAutomationCheck = true;
+      FlushOwnershipIfDirty();
+
+      if (changedCount > 0)
+      {
+        ChillEnvPlugin.Log?.LogInfo($"[启动同步] 已预写 {changedCount} 项环境音状态");
+      }
+
+      return true;
+    }
+
+    private bool TryGetEnvironmentDataService(out EnvironmentDataService environmentDataService)
+    {
+      environmentDataService = null;
+
+      var allUIs = Resources.FindObjectsOfTypeAll<EnvironmentUI>();
+      if (allUIs == null) return false;
+
+      foreach (var envUI in allUIs)
+      {
+        if (envUI == null ||
+            envUI.gameObject == null ||
+            envUI.gameObject.scene.rootCount == 0)
+        {
+          continue;
+        }
+
+        var field = envUI.GetType().GetField(
+          "_environmentDataService",
+          BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        if (field == null) return false;
+
+        environmentDataService = field.GetValue(envUI) as EnvironmentDataService;
+        return environmentDataService != null;
+      }
+
+      return false;
+    }
+
+    private int ApplyStartupAmbientSoundState(EnvironmentDataService environmentDataService)
+    {
+      int changedCount = 0;
+
+      foreach (var rule in _rules)
+      {
+        if (rule.Category != SceneryRuleCategory.AmbientSound) continue;
+        if (UserInteractedMods.Contains(rule.EnvType)) continue;
+
+        AmbientSoundType ambientSoundType;
+        if (!TryGetAmbientSoundType(rule.EnvType, out ambientSoundType)) continue;
+
+        try
+        {
+          bool conditionSatisfied = rule.ShouldBeActive();
+          bool shouldBeActive = IsRuleEnabled(rule) && conditionSatisfied;
+          bool wasManaged = _autoEnabledMods.Contains(rule.EnvType);
+          bool isCurrentlyActive = !environmentDataService.IsMuteOrVolumeZero(ambientSoundType);
+          bool isOrphanActive = isCurrentlyActive && !conditionSatisfied;
+          if (!wasManaged && !shouldBeActive && !isOrphanActive) continue;
+
+          bool shouldBeMuted = !shouldBeActive;
+          if (environmentDataService.IsMute(ambientSoundType) != shouldBeMuted)
+          {
+            environmentDataService.SetMute(ambientSoundType, shouldBeMuted);
+            changedCount++;
+          }
+
+          if (shouldBeActive)
+          {
+            MarkAutoManaged(rule.EnvType);
+          }
+          else
+          {
+            ReleaseAutoManaged(rule.EnvType);
+          }
+
+          if (EnvRegistry.TryGet(rule.EnvType, out var controller))
+          {
+            TrySetAmbientSoundLiveState(rule.Name, controller, shouldBeActive);
+          }
+        }
+        catch (Exception ex)
+        {
+          ChillEnvPlugin.Log?.LogWarning(
+            $"[启动同步] 预写环境音状态失败: {rule.Name}: {ex.Message}");
+        }
+      }
+
+      return changedCount;
+    }
+
+    private static bool TryGetAmbientSoundType(EnvironmentType environmentType, out AmbientSoundType ambientSoundType)
+    {
+      return Enum.TryParse(environmentType.ToString(), out ambientSoundType);
+    }
+
+    private bool TrySetAmbientSoundLiveState(
+      string ruleName,
+      EnvironmentController controller,
+      bool shouldBeActive)
+    {
+      if (controller == null) return false;
+
+      try
+      {
+        if (IsEnvActive(controller.EnvironmentType) == shouldBeActive)
+        {
+          return true;
+        }
+
+        var method = controller.GetType().GetMethod(
+          shouldBeActive ? "MuteDeactivate" : "MuteActivate",
+          BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (method == null)
+        {
+          return false;
+        }
+
+        method.Invoke(controller, null);
+        ChillEnvPlugin.Log?.LogInfo(
+          $"[自动托管] 环境音直连同步: {ruleName}={shouldBeActive}");
+        return true;
+      }
+      catch (ArgumentException ex)
+      {
+        ChillEnvPlugin.Log?.LogWarning(
+          $"[自动托管] 环境音直连失败: {ruleName}: {ex.Message}");
+      }
+      catch (TargetException ex)
+      {
+        ChillEnvPlugin.Log?.LogWarning(
+          $"[自动托管] 环境音直连失败: {ruleName}: {ex.Message}");
+      }
+      catch (MethodAccessException ex)
+      {
+        ChillEnvPlugin.Log?.LogWarning(
+          $"[自动托管] 环境音直连失败: {ruleName}: {ex.Message}");
+      }
+      catch (TargetInvocationException ex)
+      {
+        ChillEnvPlugin.Log?.LogWarning(
+          $"[自动托管] 环境音直连失败: {ruleName}: {ex.InnerException?.Message ?? ex.Message}");
+      }
+
+      return false;
     }
 
     /// <summary>
@@ -626,6 +864,21 @@ namespace ChillWithYou.EnvSync.Core
         // 3. 执行点击
         if (EnvRegistry.TryGet(env, out var ctrl))
         {
+          var rule = _rules.Find(r => r.EnvType == env);
+          if (rule != null &&
+              rule.Category == SceneryRuleCategory.AmbientSound &&
+              TrySetAmbientSoundLiveState(ruleName, ctrl, true))
+          {
+            _lastClickTime[env] = Time.time;
+            _pendingActions[env] = new PendingAction
+            {
+              TargetState = true,
+              VerifyTime = Time.time + VerifyDelay,
+              RuleName = ruleName
+            };
+            return;
+          }
+
           ChillEnvPlugin.Log?.LogInfo($"[自动托管] → 点击开启: {ruleName}");
           ChillEnvPlugin.SimulateClickMainIcon(ctrl);
           _lastClickTime[env] = Time.time;
@@ -676,6 +929,21 @@ namespace ChillWithYou.EnvSync.Core
 
         // 4. 执行点击
         {
+          var rule = _rules.Find(r => r.EnvType == env);
+          if (rule != null &&
+              rule.Category == SceneryRuleCategory.AmbientSound &&
+              TrySetAmbientSoundLiveState(ruleName, ctrl, false))
+          {
+            _lastClickTime[env] = Time.time;
+            _pendingActions[env] = new PendingAction
+            {
+              TargetState = false,
+              VerifyTime = Time.time + VerifyDelay,
+              RuleName = ruleName
+            };
+            return;
+          }
+
           ChillEnvPlugin.Log?.LogInfo($"[自动托管] → 点击关闭: {ruleName}");
           ChillEnvPlugin.SimulateClickMainIcon(ctrl);
           _lastClickTime[env] = Time.time;
