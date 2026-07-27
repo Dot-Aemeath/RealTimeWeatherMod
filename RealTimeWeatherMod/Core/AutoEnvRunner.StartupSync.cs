@@ -462,121 +462,129 @@ namespace ChillWithYou.EnvSync.Core
             }
 
             _startupSyncRunning = true;
-            var policy = BuildPolicySnapshot();
-            bool hasApiKey = HasUsableApiKey();
-            bool needsWeatherData = policy.CanControlWeather && hasApiKey;
-            bool needWeatherFetch = (policy.CanControlWeather || policy.CanFetchWeatherForUI) && hasApiKey;
-            string location = ChillEnvPlugin.Cfg_Location.Value;
+            bool hasApiKey = false;
+            string location = null;
 
-            if (WeatherService.HasValidCache(location))
+            try
             {
-                _pendingStartupWeather = WeatherService.CachedWeather;
-                _startupWeatherFetchFinished = true;
-                UpdateUiWeatherString(_pendingStartupWeather);
-                CheckAndSyncSunSchedule();
-            }
-            else if (needWeatherFetch)
-            {
-                _startupWeatherFetchFinished = false;
-                StartCoroutine(WeatherService.FetchWeather(
-                    ChillEnvPlugin.Cfg_SeniverseKey.Value,
-                    location,
-                    false,
-                    (weather) =>
-                    {
-                        _startupWeatherFetchFinished = true;
-                        if (weather != null)
+                var policy = BuildPolicySnapshot();
+                hasApiKey = HasUsableApiKey();
+                bool needsWeatherData = policy.CanControlWeather && hasApiKey;
+                bool needWeatherFetch = (policy.CanControlWeather || policy.CanFetchWeatherForUI) && hasApiKey;
+                location = ChillEnvPlugin.Cfg_Location.Value;
+
+                if (WeatherService.HasValidCache(location))
+                {
+                    _pendingStartupWeather = WeatherService.CachedWeather;
+                    _startupWeatherFetchFinished = true;
+                    UpdateUiWeatherString(_pendingStartupWeather);
+                    CheckAndSyncSunSchedule();
+                }
+                else if (needWeatherFetch)
+                {
+                    _startupWeatherFetchFinished = false;
+                    StartCoroutine(WeatherService.FetchWeather(
+                        ChillEnvPlugin.Cfg_SeniverseKey.Value,
+                        location,
+                        false,
+                        (weather) =>
                         {
-                            _pendingStartupWeather = weather;
-                            UpdateUiWeatherString(weather);
-                        }
-                        CheckAndSyncSunSchedule();
-                    }));
-            }
-            else
-            {
-                _startupWeatherFetchFinished = true;
-                CheckAndSyncSunSchedule();
-            }
-
-            float timeout = 30f;
-            while (!_firstSyncDone && timeout > 0f)
-            {
-                WeatherInfo weather = _pendingStartupWeather;
-                MonoBehaviour envUI = FindEnvironmentUI();
-                object windowViewService;
-                object environmentDataService;
-                bool runtimeReady = TryGetStartupRuntime(envUI, out windowViewService, out environmentDataService);
-                if (runtimeReady)
-                {
-                    TryApplyStartupAmbientSoundSync(environmentDataService);
-                }
-
-                bool weatherDecisionReady = weather != null || _startupWeatherFetchFinished;
-                bool needsSceneryControllers = policy.CanControlWeather && weather != null;
-                bool sceneryControllersReady = !needsSceneryControllers || AreSceneryControllersReady();
-
-                var action = StartupWeatherSyncPolicy.Determine(
-                    policy.CanMutateEnvironment,
-                    runtimeReady,
-                    needsWeatherData,
-                    weatherDecisionReady,
-                    needsSceneryControllers,
-                    sceneryControllersReady);
-
-                if (action == StartupWeatherSyncAction.Skip)
-                {
-                    _firstSyncDone = true;
-                    break;
-                }
-
-                if (action == StartupWeatherSyncAction.ApplyAndKeepSettling ||
-                    action == StartupWeatherSyncAction.ApplyAndFinish)
-                {
-                    bool applied = TryApplyStartupEnvironment(
-                        policy,
-                        weather,
-                        envUI,
-                        windowViewService,
-                        environmentDataService);
-
-                    if (applied && !_startupAppliedOnce)
-                    {
-                        _startupAppliedOnce = true;
-                        string scenery = weather == null ? "未接管" : (GetSceneryType(weather.Code)?.ToString() ?? "无降水");
-                        string baseEnvironment = policy.CanControlTime ? GetDesiredBaseEnvironment(policy, weather).ToString() : "未接管";
-                        ChillEnvPlugin.Log?.LogInfo($"[启动同步] 已在主角坐下前应用环境: base={baseEnvironment}, scenery={scenery}");
-                    }
-
-                    if (applied && action == StartupWeatherSyncAction.ApplyAndFinish)
-                    {
-                        _firstSyncDone = true;
-                        ChillEnvPlugin.Log?.LogInfo("[启动同步] 环境状态验证完成");
-                        break;
-                    }
-                }
-
-                yield return new WaitForSeconds(StartupSyncPollIntervalSeconds);
-                timeout -= StartupSyncPollIntervalSeconds;
-            }
-
-            if (!_firstSyncDone)
-            {
-                _firstSyncDone = _startupAppliedOnce;
-                if (_startupAppliedOnce)
-                {
-                    ChillEnvPlugin.Log?.LogWarning("[启动同步] 控制器等待超时，但直连环境已应用并验证");
+                            _startupWeatherFetchFinished = true;
+                            if (weather != null)
+                            {
+                                _pendingStartupWeather = weather;
+                                UpdateUiWeatherString(weather);
+                            }
+                            CheckAndSyncSunSchedule();
+                        }));
                 }
                 else
                 {
-                    ChillEnvPlugin.Log?.LogWarning("[启动同步] 超时等待环境运行时，后续由常规定时器兜底");
+                    _startupWeatherFetchFinished = true;
+                    CheckAndSyncSunSchedule();
+                }
+
+                float timeout = 30f;
+                while (!_firstSyncDone && timeout > 0f)
+                {
+                    WeatherInfo weather = _pendingStartupWeather;
+                    MonoBehaviour envUI = FindEnvironmentUI();
+                    object windowViewService;
+                    object environmentDataService;
+                    bool runtimeReady = TryGetStartupRuntime(envUI, out windowViewService, out environmentDataService);
+                    if (runtimeReady)
+                    {
+                        TryApplyStartupAmbientSoundSync(environmentDataService);
+                    }
+
+                    bool weatherDecisionReady = weather != null || _startupWeatherFetchFinished;
+                    bool needsSceneryControllers = policy.CanControlWeather && weather != null;
+                    bool sceneryControllersReady = !needsSceneryControllers || AreSceneryControllersReady();
+
+                    var action = StartupWeatherSyncPolicy.Determine(
+                        policy.CanMutateEnvironment,
+                        runtimeReady,
+                        needsWeatherData,
+                        weatherDecisionReady,
+                        needsSceneryControllers,
+                        sceneryControllersReady);
+
+                    if (action == StartupWeatherSyncAction.Skip)
+                    {
+                        _firstSyncDone = true;
+                        break;
+                    }
+
+                    if (action == StartupWeatherSyncAction.ApplyAndKeepSettling ||
+                        action == StartupWeatherSyncAction.ApplyAndFinish)
+                    {
+                        bool applied = TryApplyStartupEnvironment(
+                            policy,
+                            weather,
+                            envUI,
+                            windowViewService,
+                            environmentDataService);
+
+                        if (applied && !_startupAppliedOnce)
+                        {
+                            _startupAppliedOnce = true;
+                            string scenery = weather == null ? "未接管" : (GetSceneryType(weather.Code)?.ToString() ?? "无降水");
+                            string baseEnvironment = policy.CanControlTime ? GetDesiredBaseEnvironment(policy, weather).ToString() : "未接管";
+                            ChillEnvPlugin.Log?.LogInfo($"[启动同步] 已在主角坐下前应用环境: base={baseEnvironment}, scenery={scenery}");
+                        }
+
+                        if (applied && action == StartupWeatherSyncAction.ApplyAndFinish)
+                        {
+                            _firstSyncDone = true;
+                            ChillEnvPlugin.Log?.LogInfo("[启动同步] 环境状态验证完成");
+                            break;
+                        }
+                    }
+
+                    yield return new WaitForSeconds(StartupSyncPollIntervalSeconds);
+                    timeout -= StartupSyncPollIntervalSeconds;
+                }
+
+                if (!_firstSyncDone)
+                {
+                    _firstSyncDone = _startupAppliedOnce;
+                    if (_startupAppliedOnce)
+                    {
+                        ChillEnvPlugin.Log?.LogWarning("[启动同步] 控制器等待超时，但直连环境已应用并验证");
+                    }
+                    else
+                    {
+                        ChillEnvPlugin.Log?.LogWarning("[启动同步] 超时等待环境运行时，后续由常规定时器兜底");
+                    }
                 }
             }
-
-            _startupSyncRunning = false;
-            if (hasApiKey)
+            finally
             {
-                ScheduleNextWeatherCheckFromCache(location);
+                _startupSyncRunning = false;
+                if (hasApiKey)
+                {
+                    ScheduleNextWeatherCheckFromCache(location);
+                }
             }
         }
 
