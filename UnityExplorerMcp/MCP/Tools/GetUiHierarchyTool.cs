@@ -5,7 +5,7 @@ namespace UnityExplorerMcp.MCP.Tools
     internal class GetUiHierarchyTool : MainThreadTool
     {
         public override string Name => "get_ui_hierarchy";
-        public override string Description => "Get the full UI hierarchy tree with RectTransform coordinates. Lists all Canvas elements and their children with positions, sizes, anchors.";
+        public override string Description => "Get a depth-limited UI hierarchy. Defaults to active root Canvases and 5 levels to control token use; use search_elements first for text/name lookup.";
         public override Dictionary<string, object> InputSchema => new Dictionary<string, object>
         {
             ["type"] = "object",
@@ -15,6 +15,16 @@ namespace UnityExplorerMcp.MCP.Tools
                 {
                     ["type"] = "string",
                     ["description"] = "Optional canvas name filter (case-insensitive)"
+                },
+                ["maxDepth"] = new Dictionary<string, object>
+                {
+                    ["type"] = "number",
+                    ["description"] = "Maximum child depth (default: 5, max: 10)"
+                },
+                ["activeOnly"] = new Dictionary<string, object>
+                {
+                    ["type"] = "boolean",
+                    ["description"] = "Only include active objects (default: true)"
                 }
             }
         };
@@ -24,7 +34,21 @@ namespace UnityExplorerMcp.MCP.Tools
         public override McpContentItem ExecuteOnMain(Dictionary<string, object> args)
         {
             string canvasFilter = args != null && args.TryGetValue("canvasName", out var v) ? v?.ToString() : null;
-            var hierarchy = Core.UiHierarchyTraverser.GetHierarchy(canvasFilter);
+            int maxDepth = 5;
+            bool activeOnly = true;
+            if (args != null)
+            {
+                if (args.TryGetValue("maxDepth", out var depth))
+                {
+                    if (depth is long l) maxDepth = (int)l;
+                    else if (depth is double d) maxDepth = (int)d;
+                    if (maxDepth < 1) maxDepth = 1;
+                    if (maxDepth > 10) maxDepth = 10;
+                }
+                if (args.TryGetValue("activeOnly", out var active) && active is bool b)
+                    activeOnly = b;
+            }
+            var hierarchy = Core.UiHierarchyTraverser.GetHierarchy(canvasFilter, maxDepth, activeOnly);
             var json = MCP.JsonHelper.Serialize(hierarchy);
             return new McpContentItem { type = "text", text = json };
         }

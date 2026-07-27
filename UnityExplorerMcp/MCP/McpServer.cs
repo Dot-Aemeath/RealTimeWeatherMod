@@ -13,6 +13,7 @@ namespace UnityExplorerMcp.MCP
 {
     internal class McpServer
     {
+        private const int MaxRequestBytes = 1024 * 1024;
         private readonly int _port;
         private readonly ManualLogSource _logger;
         private TcpListener _listener;
@@ -93,6 +94,8 @@ namespace UnityExplorerMcp.MCP
             var client = (TcpClient)state;
             try
             {
+                client.ReceiveTimeout = 15000;
+                client.SendTimeout = 15000;
                 using (client)
                 using (var stream = client.GetStream())
                 {
@@ -105,7 +108,11 @@ namespace UnityExplorerMcp.MCP
                     while (true)
                     {
                         if (totalRead >= buffer.Length)
-                            Array.Resize(ref buffer, buffer.Length * 2);
+                        {
+                            if (totalRead >= MaxRequestBytes)
+                                throw new InvalidDataException("HTTP request exceeds 1 MiB limit");
+                            Array.Resize(ref buffer, Math.Min(buffer.Length * 2, MaxRequestBytes));
+                        }
 
                         int read = stream.Read(buffer, totalRead, buffer.Length - totalRead);
                         if (read <= 0) break;
@@ -131,6 +138,8 @@ namespace UnityExplorerMcp.MCP
                                     if (l.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
                                         int.TryParse(l.Substring(15).Trim(), out contentLength);
                                 }
+                                if (contentLength < 0 || contentLength > MaxRequestBytes - bodyStart)
+                                    throw new InvalidDataException("Invalid or oversized Content-Length");
                             }
                         }
 
@@ -144,7 +153,10 @@ namespace UnityExplorerMcp.MCP
 
                     if (isOptions)
                     {
-                        var resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nAccess-Control-Max-Age: 86400\r\n\r\n";
+                        // Native MCP clients do not need CORS. Deliberately omit
+                        // Access-Control-Allow-Origin so arbitrary web pages cannot
+                        // invoke execute_code through the user's localhost.
+                        var resp = "HTTP/1.1 204 No Content\r\n\r\n";
                         var respBytes = Encoding.UTF8.GetBytes(resp);
                         stream.Write(respBytes, 0, respBytes.Length);
                         return;
@@ -179,7 +191,9 @@ namespace UnityExplorerMcp.MCP
                 if (_sseClient != null) { try { _sseClient.Close(); } catch { } }
                 _sseClient = client;
                 _sseStream = stream;
-                _sseWriter = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
+                // Encoding.UTF8 emits a BOM on first write under .NET Framework.
+                // A BOM before "HTTP/1.1" makes strict HTTP/MCP clients reject the response.
+                _sseWriter = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
             }
 
             lock (_sseLock)
@@ -190,8 +204,6 @@ namespace UnityExplorerMcp.MCP
                     _sseWriter.Write("Content-Type: text/event-stream\r\n");
                     _sseWriter.Write("Cache-Control: no-cache\r\n");
                     _sseWriter.Write("Connection: keep-alive\r\n");
-                    _sseWriter.Write("Access-Control-Allow-Origin: *\r\n");
-                    _sseWriter.Write("Access-Control-Allow-Methods: POST, OPTIONS\r\n");
                     _sseWriter.Write("\r\n");
                     _sseWriter.Flush();
                 }
@@ -267,7 +279,7 @@ namespace UnityExplorerMcp.MCP
                 {
                     if (_sseWriter != null)
                     {
-                        var header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + respBytes.Length + "\r\n\r\n";
+                        var header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + respBytes.Length + "\r\n\r\n";
                         var headerBytes = Encoding.UTF8.GetBytes(header);
                         stream.Write(headerBytes, 0, headerBytes.Length);
                         stream.Write(respBytes, 0, respBytes.Length);
@@ -283,7 +295,7 @@ namespace UnityExplorerMcp.MCP
             }
 
             // No SSE fallback: just write HTTP directly
-            var header2 = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + respBytes.Length + "\r\n\r\n";
+            var header2 = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + respBytes.Length + "\r\n\r\n";
             var headerBytes2 = Encoding.UTF8.GetBytes(header2);
             stream.Write(headerBytes2, 0, headerBytes2.Length);
             stream.Write(respBytes, 0, respBytes.Length);

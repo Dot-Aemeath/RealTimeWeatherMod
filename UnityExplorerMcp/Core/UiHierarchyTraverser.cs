@@ -30,7 +30,10 @@ namespace UnityExplorerMcp.Core
             return result;
         }
 
-        public static UiElementInfo GetHierarchy(string canvasName = null)
+        public static UiElementInfo GetHierarchy(
+            string canvasName = null,
+            int maxDepth = 5,
+            bool activeOnly = true)
         {
             var root = new UiElementInfo
             {
@@ -52,11 +55,20 @@ namespace UnityExplorerMcp.Core
             foreach (var canvas in canvases)
             {
                 if (canvas.gameObject == null || canvas.gameObject.scene.name == null) continue;
+                if (activeOnly && !canvas.gameObject.activeInHierarchy) continue;
                 if (!string.IsNullOrEmpty(canvasName) &&
-                    !canvas.gameObject.name.ToLower().Contains(canvasName.ToLower()))
+                    !ContainsIgnoreCase(canvas.gameObject.name, canvasName))
+                    continue;
+                if (string.IsNullOrEmpty(canvasName) && canvas.transform.parent != null &&
+                    canvas.transform.parent.GetComponentInParent<Canvas>() != null)
                     continue;
 
-                root.children.Add(TraverseTransform(canvas.transform, ""));
+                root.children.Add(TraverseTransform(
+                    canvas.transform,
+                    GetParentPath(canvas.transform),
+                    0,
+                    maxDepth,
+                    activeOnly));
             }
 
             return root;
@@ -64,12 +76,23 @@ namespace UnityExplorerMcp.Core
 
         public static UiElementInfo TraverseTransform(Transform t, string parentPath)
         {
+            return TraverseTransform(t, parentPath, 0, int.MaxValue, false);
+        }
+
+        private static UiElementInfo TraverseTransform(
+            Transform t,
+            string parentPath,
+            int depth,
+            int maxDepth,
+            bool activeOnly)
+        {
             var path = string.IsNullOrEmpty(parentPath)
                 ? t.name
                 : parentPath + "/" + t.name;
 
             var info = new UiElementInfo
             {
+                instanceId = t.gameObject.GetInstanceID(),
                 name = t.name,
                 path = path,
                 active = t.gameObject.activeInHierarchy,
@@ -81,34 +104,23 @@ namespace UnityExplorerMcp.Core
                 children = new List<UiElementInfo>()
             };
 
+            if (depth >= maxDepth) return info;
+
             for (int i = 0; i < t.childCount; i++)
             {
-                info.children.Add(TraverseTransform(t.GetChild(i), path));
+                var child = t.GetChild(i);
+                if (activeOnly && !child.gameObject.activeInHierarchy) continue;
+                info.children.Add(TraverseTransform(child, path, depth + 1, maxDepth, activeOnly));
             }
 
             return info;
         }
 
-        public static UiElementInfo GetElementByPath(string path)
+        public static UiElementInfo GetElementByPath(string path, int instanceId = 0)
         {
-            var go = GameObject.Find(path);
-            if (go == null)
-            {
-                // Try to find by name search
-                var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
-                foreach (var obj in allObjects)
-                {
-                    if (obj.scene.name == null) continue;
-                    if (GetPath(obj.transform) == path || obj.name == path)
-                    {
-                        go = obj;
-                        break;
-                    }
-                }
-            }
-
+            var go = FindGameObject(path, instanceId);
             if (go == null) return null;
-            return TraverseTransform(go.transform, "");
+            return CreateElementSummary(go);
         }
 
         public static string GetPath(Transform t)
@@ -124,59 +136,155 @@ namespace UnityExplorerMcp.Core
             return sb.ToString();
         }
 
-        public static List<UiElementInfo> SearchElements(string query, string componentType = null)
+        private static string GetParentPath(Transform transform)
         {
-            var results = new List<UiElementInfo>();
+            return transform != null && transform.parent != null
+                ? GetPath(transform.parent)
+                : "";
+        }
+
+        public static UiSearchResult SearchElements(
+            string query,
+            string componentType = null,
+            bool activeOnly = true,
+            int maxResults = 25)
+        {
+            var elements = new List<UiElementInfo>();
             var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
+            int totalMatches = 0;
+            string normalizedQuery = query ?? "";
 
             foreach (var go in allObjects)
             {
                 if (go.scene.name == null) continue;
                 if (go.hideFlags.HasFlag(HideFlags.HideInHierarchy)) continue;
-
-                bool nameMatch = string.IsNullOrEmpty(query) ||
-                    go.name.ToLower().Contains(query.ToLower());
-                if (!nameMatch) continue;
+                if (!(go.transform is RectTransform)) continue;
+                if (activeOnly && !go.activeInHierarchy) continue;
 
                 if (!string.IsNullOrEmpty(componentType))
                 {
                     if (!HasComponent(go, componentType)) continue;
                 }
 
-                var uiInfo = new UiElementInfo
+                string text = GetUiText(go);
+                string path = null;
+                bool matches = string.IsNullOrEmpty(normalizedQuery) ||
+                    ContainsIgnoreCase(go.name, normalizedQuery) ||
+                    ContainsIgnoreCase(text, normalizedQuery);
+                if (!matches)
                 {
-                    name = go.name,
-                    path = GetPath(go.transform),
-                    active = go.activeInHierarchy,
-                    tag = go.tag,
-                    layer = go.layer,
-                    componentCount = go.GetComponents<Component>().Length,
-                    rectTransform = GetRectTransformInfo(go.transform),
-                    children = null
-                };
-                results.Add(uiInfo);
+                    path = GetPath(go.transform);
+                    matches = ContainsIgnoreCase(path, normalizedQuery);
+                }
+                if (!matches) continue;
+
+                totalMatches++;
+                if (elements.Count >= maxResults) continue;
+                elements.Add(CreateElementSummary(go, path, text));
             }
 
-            return results;
+            return new UiSearchResult
+            {
+                totalMatches = totalMatches,
+                returned = elements.Count,
+                truncated = totalMatches > elements.Count,
+                elements = elements
+            };
         }
 
-        public static List<ComponentInfo> GetComponentDetails(string path)
+        internal static UiElementInfo CreateElementSummary(GameObject go, string path = null, string text = null)
         {
-            var go = GameObject.Find(path);
-            if (go == null)
+            var components = go.GetComponents<Component>();
+            var componentTypes = new List<string>();
+            foreach (var component in components)
             {
-                var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
-                foreach (var obj in allObjects)
-                {
-                    if (obj.scene.name == null) continue;
-                    if (GetPath(obj.transform) == path || obj.name == path)
-                    {
-                        go = obj;
-                        break;
-                    }
-                }
+                if (component != null) componentTypes.Add(component.GetType().Name);
             }
 
+            return new UiElementInfo
+            {
+                instanceId = go.GetInstanceID(),
+                name = go.name,
+                path = path ?? GetPath(go.transform),
+                active = go.activeInHierarchy,
+                tag = go.tag,
+                layer = go.layer,
+                childCount = go.transform.childCount,
+                componentCount = components.Length,
+                text = text ?? GetUiText(go),
+                componentTypes = componentTypes,
+                interactiveAncestorPath = GetInteractiveAncestorPath(go.transform),
+                rectTransform = GetRectTransformInfo(go.transform),
+                screenRect = GetScreenRect(go.transform as RectTransform)
+            };
+        }
+
+        private static bool ContainsIgnoreCase(string value, string query)
+        {
+            return !string.IsNullOrEmpty(value) &&
+                value.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string GetUiText(GameObject go)
+        {
+            var text = go.GetComponent<Text>();
+            if (text != null) return text.text;
+            var tmp = go.GetComponent<TMP_Text>();
+            return tmp != null ? tmp.text : null;
+        }
+
+        private static string GetInteractiveAncestorPath(Transform transform)
+        {
+            var current = transform;
+            while (current != null)
+            {
+                if (current.GetComponent<Selectable>() != null)
+                    return GetPath(current);
+                current = current.parent;
+            }
+            return null;
+        }
+
+        private static ScreenRectInfo GetScreenRect(RectTransform rectTransform)
+        {
+            if (rectTransform == null) return null;
+
+            var corners = new Vector3[4];
+            rectTransform.GetWorldCorners(corners);
+            var canvas = rectTransform.GetComponentInParent<Canvas>();
+            Camera camera = null;
+            if (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay)
+                camera = canvas.worldCamera;
+
+            var first = RectTransformUtility.WorldToScreenPoint(camera, corners[0]);
+            float minX = first.x;
+            float minY = first.y;
+            float maxX = first.x;
+            float maxY = first.y;
+            for (int i = 1; i < corners.Length; i++)
+            {
+                var point = RectTransformUtility.WorldToScreenPoint(camera, corners[i]);
+                minX = Math.Min(minX, point.x);
+                minY = Math.Min(minY, point.y);
+                maxX = Math.Max(maxX, point.x);
+                maxY = Math.Max(maxY, point.y);
+            }
+
+            return new ScreenRectInfo
+            {
+                minX = minX,
+                minY = minY,
+                maxX = maxX,
+                maxY = maxY,
+                centerX = (minX + maxX) / 2f,
+                centerY = (minY + maxY) / 2f,
+                onScreen = maxX >= 0 && maxY >= 0 && minX <= Screen.width && minY <= Screen.height
+            };
+        }
+
+        public static List<ComponentInfo> GetComponentDetails(string path, int instanceId = 0)
+        {
+            var go = FindGameObject(path, instanceId);
             if (go == null) return null;
 
             var components = go.GetComponents<Component>();
@@ -337,6 +445,27 @@ namespace UnityExplorerMcp.Core
             return result;
         }
 
+        internal static GameObject FindGameObject(string path, int instanceId)
+        {
+            if (instanceId == 0 && !string.IsNullOrEmpty(path))
+            {
+                var direct = GameObject.Find(path);
+                if (direct != null) return direct;
+            }
+
+            var allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
+            foreach (var obj in allObjects)
+            {
+                if (obj.scene.name == null) continue;
+                if (instanceId != 0 && obj.GetInstanceID() == instanceId)
+                    return obj;
+                if (instanceId == 0 && !string.IsNullOrEmpty(path) &&
+                    (GetPath(obj.transform) == path || obj.name == path))
+                    return obj;
+            }
+            return null;
+        }
+
         private static bool HasComponent(GameObject go, string typeName)
         {
             var comps = go.GetComponents<Component>();
@@ -344,12 +473,16 @@ namespace UnityExplorerMcp.Core
             {
                 if (c == null) continue;
                 var name = c.GetType().Name;
-                if (name == typeName) return true;
+                if (string.Equals(name, typeName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.GetType().FullName, typeName, StringComparison.OrdinalIgnoreCase))
+                    return true;
                 // "Text" should also match TextMeshProUGUI / TMP_Text
-                if (typeName == "Text" && (name == "TextMeshProUGUI" || name == "TMP_Text"))
+                if (string.Equals(typeName, "Text", StringComparison.OrdinalIgnoreCase) &&
+                    c is TMP_Text)
                     return true;
                 // "Image" should also match RawImage
-                if (typeName == "Image" && name == "RawImage")
+                if (string.Equals(typeName, "Image", StringComparison.OrdinalIgnoreCase) &&
+                    name == "RawImage")
                     return true;
                 // "Button" should also match Toggle-like behaviors if relevant
             }
@@ -407,43 +540,94 @@ namespace UnityExplorerMcp.Core
             return count;
         }
 
-        public static string GetMouseElement()
+        public static List<UiElementInfo> GetMouseElements(int maxResults = 5)
         {
+            return GetElementsAtScreenPoint(Input.mousePosition, maxResults);
+        }
+
+        public static List<UiElementInfo> GetElementsAtScreenPoint(Vector2 screenPoint, int maxResults = 5)
+        {
+            var matches = new List<UiElementInfo>();
             var eventSystem = UnityEngine.EventSystems.EventSystem.current;
-            if (eventSystem == null) return null;
+            var seen = new HashSet<int>();
 
-            var data = new UnityEngine.EventSystems.PointerEventData(eventSystem)
+            if (eventSystem != null)
             {
-                position = Input.mousePosition
-            };
-
-            var results = new System.Collections.Generic.List<UnityEngine.EventSystems.RaycastResult>();
-            var graphicRaycaster = UnityEngine.Object.FindObjectOfType<GraphicRaycaster>();
-            if (graphicRaycaster != null)
-            {
-                graphicRaycaster.Raycast(data, results);
-            }
-            else
-            {
-                var canvases = Resources.FindObjectsOfTypeAll<Canvas>();
-                foreach (var c in canvases)
+                var data = new UnityEngine.EventSystems.PointerEventData(eventSystem)
                 {
-                    var gr = c.GetComponent<GraphicRaycaster>();
-                    if (gr != null)
-                    {
-                        data.position = Input.mousePosition;
-                        gr.Raycast(data, results);
-                    }
+                    position = screenPoint
+                };
+
+                var results = new List<UnityEngine.EventSystems.RaycastResult>();
+                eventSystem.RaycastAll(data, results);
+                foreach (var hit in results)
+                {
+                    if (hit.gameObject == null) continue;
+                    AddScreenPointMatch(matches, seen, hit.gameObject, maxResults);
+                    if (matches.Count >= maxResults) return matches;
                 }
             }
 
-            if (results.Count > 0)
+            // Some games use temporary/non-standard canvases for which EventSystem.RaycastAll
+            // produces no result. Fall back to visible raycast-target Graphics whose actual
+            // screen rectangle contains the point.
+            var graphicHits = new List<Graphic>();
+            foreach (var graphic in Resources.FindObjectsOfTypeAll<Graphic>())
             {
-                var top = results[0];
-                return top.gameObject.name + "|" + GetPath(top.gameObject.transform);
+                if (graphic == null || !graphic.enabled || !graphic.raycastTarget) continue;
+                if (graphic.gameObject == null || graphic.gameObject.scene.name == null) continue;
+                if (!graphic.gameObject.activeInHierarchy || graphic.rectTransform == null) continue;
+
+                var canvas = graphic.canvas;
+                Camera camera = null;
+                if (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay)
+                    camera = canvas.worldCamera;
+
+                if (RectTransformUtility.RectangleContainsScreenPoint(
+                    graphic.rectTransform,
+                    screenPoint,
+                    camera))
+                {
+                    graphicHits.Add(graphic);
+                }
             }
 
-            return null;
+            graphicHits.Sort((left, right) =>
+            {
+                int leftOrder = left.canvas != null ? left.canvas.sortingOrder : 0;
+                int rightOrder = right.canvas != null ? right.canvas.sortingOrder : 0;
+                int orderComparison = rightOrder.CompareTo(leftOrder);
+                if (orderComparison != 0) return orderComparison;
+                return right.depth.CompareTo(left.depth);
+            });
+
+            foreach (var graphic in graphicHits)
+            {
+                AddScreenPointMatch(matches, seen, graphic.gameObject, maxResults);
+                if (matches.Count >= maxResults) break;
+            }
+
+            return matches;
+        }
+
+        private static void AddScreenPointMatch(
+            List<UiElementInfo> matches,
+            HashSet<int> seen,
+            GameObject gameObject,
+            int maxResults)
+        {
+            if (gameObject == null || matches.Count >= maxResults) return;
+            int id = gameObject.GetInstanceID();
+            if (seen.Add(id))
+                matches.Add(CreateElementSummary(gameObject));
+
+            if (matches.Count >= maxResults) return;
+            var selectable = gameObject.GetComponentInParent<Selectable>();
+            if (selectable == null || selectable.gameObject == gameObject) return;
+
+            int selectableId = selectable.gameObject.GetInstanceID();
+            if (seen.Add(selectableId))
+                matches.Add(CreateElementSummary(selectable.gameObject));
         }
     }
 }

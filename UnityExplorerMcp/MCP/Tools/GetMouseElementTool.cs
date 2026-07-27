@@ -5,36 +5,44 @@ namespace UnityExplorerMcp.MCP.Tools
     internal class GetMouseElementTool : MainThreadTool
     {
         public override string Name => "get_mouse_element";
-        public override string Description => "Get the UI element currently under the mouse cursor. Returns the topmost UI element hit by GraphicRaycaster at the current mouse position.";
+        public override string Description => "Get UI elements under the mouse across every active Canvas, ordered topmost first. Returns paths, instance IDs, text, components, and screen bounds.";
         public override Dictionary<string, object> InputSchema => new Dictionary<string, object>
         {
             ["type"] = "object",
-            ["properties"] = new Dictionary<string, object>()
+            ["properties"] = new Dictionary<string, object>
+            {
+                ["maxResults"] = new Dictionary<string, object>
+                {
+                    ["type"] = "number",
+                    ["description"] = "Maximum hit stack depth (default: 5, max: 20)"
+                }
+            }
         };
 
         public override object Execute(Dictionary<string, object> args) => null;
 
         public override McpContentItem ExecuteOnMain(Dictionary<string, object> args)
         {
-            var result = Core.UiHierarchyTraverser.GetMouseElement();
-            if (result == null)
-                return new McpContentItem { type = "text", text = "{\"found\":false}" };
-
-            var parts = result.Split('|');
-            if (parts.Length >= 2)
+            int maxResults = 5;
+            if (args != null && args.TryGetValue("maxResults", out var value))
             {
-                var components = Core.UiHierarchyTraverser.GetComponentDetails(parts[1]);
-                var json = MCP.JsonHelper.Serialize(new
-                {
-                    found = true,
-                    name = parts[0],
-                    path = parts[1],
-                    components
-                });
-                return new McpContentItem { type = "text", text = json };
+                if (value is long l) maxResults = (int)l;
+                else if (value is double d) maxResults = (int)d;
+                if (maxResults < 1) maxResults = 1;
+                if (maxResults > 20) maxResults = 20;
             }
 
-            return new McpContentItem { type = "text", text = "{\"found\":false}" };
+            var results = Core.UiHierarchyTraverser.GetMouseElements(maxResults);
+            if (results.Count == 0)
+                return new McpContentItem { type = "text", text = "{\"found\":false}" };
+
+            var json = MCP.JsonHelper.Serialize(new
+            {
+                found = true,
+                mousePosition = UnityEngine.Input.mousePosition.ToString(),
+                elements = results
+            });
+            return new McpContentItem { type = "text", text = json };
         }
     }
 }

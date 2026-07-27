@@ -4,6 +4,7 @@ namespace UnityExplorerMcp.Models
 {
     internal class UiElementInfo
     {
+        public int instanceId { get; set; }
         public string name { get; set; }
         public string path { get; set; }
         public bool active { get; set; }
@@ -11,7 +12,11 @@ namespace UnityExplorerMcp.Models
         public int layer { get; set; }
         public int childCount { get; set; }
         public int componentCount { get; set; }
+        public string text { get; set; }
+        public List<string> componentTypes { get; set; }
+        public string interactiveAncestorPath { get; set; }
         public RectTransformInfo rectTransform { get; set; }
+        public ScreenRectInfo screenRect { get; set; }
         public List<UiElementInfo> children { get; set; }
     }
 
@@ -32,6 +37,25 @@ namespace UnityExplorerMcp.Models
         public float scaleX { get; set; }
         public float scaleY { get; set; }
         public float rotation { get; set; }
+    }
+
+    internal class ScreenRectInfo
+    {
+        public float minX { get; set; }
+        public float minY { get; set; }
+        public float maxX { get; set; }
+        public float maxY { get; set; }
+        public float centerX { get; set; }
+        public float centerY { get; set; }
+        public bool onScreen { get; set; }
+    }
+
+    internal class UiSearchResult
+    {
+        public int totalMatches { get; set; }
+        public int returned { get; set; }
+        public bool truncated { get; set; }
+        public List<UiElementInfo> elements { get; set; }
     }
 
     internal class ComponentInfo

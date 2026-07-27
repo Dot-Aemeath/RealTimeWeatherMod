@@ -6,7 +6,7 @@ namespace UnityExplorerMcp.MCP.Tools
     internal class SearchElementsTool : MainThreadTool
     {
         public override string Name => "search_elements";
-        public override string Description => "Search UI elements by name and optional component type filter. Returns matching elements with their paths and basic info.";
+        public override string Description => "Find UI by GameObject name, hierarchy path, or visible Text/TMP text. Returns token-bounded matches with instance IDs, component types, interactive ancestor, and screen pixel bounds.";
         public override Dictionary<string, object> InputSchema => new Dictionary<string, object>
         {
             ["type"] = "object",
@@ -21,6 +21,16 @@ namespace UnityExplorerMcp.MCP.Tools
                 {
                     ["type"] = "string",
                     ["description"] = "Optional component type filter (e.g., 'Button', 'Image', 'Text')"
+                },
+                ["activeOnly"] = new Dictionary<string, object>
+                {
+                    ["type"] = "boolean",
+                    ["description"] = "Only return active UI. Default: true. Set false to inspect closed/inactive panels."
+                },
+                ["maxResults"] = new Dictionary<string, object>
+                {
+                    ["type"] = "number",
+                    ["description"] = "Maximum results to return (default: 25, max: 100)"
                 }
             },
             ["required"] = new List<string> { "query" }
@@ -35,10 +45,22 @@ namespace UnityExplorerMcp.MCP.Tools
 
             string query = queryVal?.ToString();
             string componentType = args.TryGetValue("componentType", out var ct) ? ct?.ToString() : null;
+            bool activeOnly = !args.TryGetValue("activeOnly", out var av) || !(av is bool active) || active;
+            int maxResults = GetInt(args, "maxResults", 25, 1, 100);
 
-            var results = UiHierarchyTraverser.SearchElements(query, componentType);
+            var results = UiHierarchyTraverser.SearchElements(query, componentType, activeOnly, maxResults);
             var json = MCP.JsonHelper.Serialize(results);
             return new McpContentItem { type = "text", text = json };
+        }
+
+        private static int GetInt(Dictionary<string, object> args, string name, int defaultValue, int min, int max)
+        {
+            if (!args.TryGetValue(name, out var value)) return defaultValue;
+            int result = defaultValue;
+            if (value is long l) result = (int)l;
+            else if (value is double d) result = (int)d;
+            else if (value is int i) result = i;
+            return result < min ? min : result > max ? max : result;
         }
     }
 }

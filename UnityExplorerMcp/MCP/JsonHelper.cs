@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using System.Text;
 
@@ -21,9 +22,9 @@ namespace UnityExplorerMcp.MCP
             if (obj is bool b) return b ? "true" : "false";
             if (obj is int i) return i.ToString();
             if (obj is long l) return l.ToString();
-            if (obj is float f) return f.ToString("R");
-            if (obj is double d) return d.ToString("R");
-            if (obj is decimal m) return m.ToString("R");
+            if (obj is float f) return f.ToString("R", CultureInfo.InvariantCulture);
+            if (obj is double d) return d.ToString("R", CultureInfo.InvariantCulture);
+            if (obj is decimal m) return m.ToString(CultureInfo.InvariantCulture);
             if (obj is Enum e) return EscapeString(e.ToString());
             if (obj is IDictionary dict) return SerializeDictionary(dict, depth, maxDepth);
             if (obj is IList list) return SerializeArray(list, depth, maxDepth);
@@ -45,7 +46,14 @@ namespace UnityExplorerMcp.MCP
                     case '\n': sb.Append("\\n"); break;
                     case '\r': sb.Append("\\r"); break;
                     case '\t': sb.Append("\\t"); break;
-                    default: sb.Append(c); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    default:
+                        if (c < 0x20)
+                            sb.Append("\\u" + ((int)c).ToString("x4"));
+                        else
+                            sb.Append(c);
+                        break;
                 }
             }
             sb.Append('"');
@@ -65,6 +73,7 @@ namespace UnityExplorerMcp.MCP
                 try
                 {
                     var val = prop.GetValue(obj);
+                    if (val == null) continue;
                     if (!first) sb.Append(',');
                     sb.Append(EscapeString(prop.Name));
                     sb.Append(':');
@@ -78,6 +87,7 @@ namespace UnityExplorerMcp.MCP
                 try
                 {
                     var val = field.GetValue(obj);
+                    if (val == null) continue;
                     if (!first) sb.Append(',');
                     sb.Append(EscapeString(field.Name));
                     sb.Append(':');
