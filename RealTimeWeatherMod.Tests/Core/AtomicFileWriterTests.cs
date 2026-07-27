@@ -54,6 +54,33 @@ namespace RealTimeWeatherMod.Tests.Core
             }
         }
 
+        [Fact]
+        public void Commit_CleansUpTemp_WhenReplaceFails()
+        {
+            string directory = CreateTemporaryDirectory();
+            try
+            {
+                string targetPath = Path.Combine(directory, "state");
+                string tempPath = targetPath + ".tmp";
+                string backupPath = targetPath + ".bak";
+                File.WriteAllText(targetPath, "old");
+                File.WriteAllText(tempPath, "new");
+
+                using (File.Open(targetPath, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    Assert.ThrowsAny<IOException>(
+                        () => AtomicFileWriter.Commit(tempPath, targetPath, backupPath));
+                }
+
+                Assert.False(File.Exists(tempPath));
+                Assert.Equal("old", File.ReadAllText(targetPath));
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
         private static string CreateTemporaryDirectory()
         {
             string path = Path.Combine(

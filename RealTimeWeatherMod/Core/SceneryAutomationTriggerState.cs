@@ -126,13 +126,13 @@ namespace ChillWithYou.EnvSync.Core
                     AddTriggerLine(lines, "HotSpring", _hotSpringTriggeredToday, _hotSpringRollDoneToday);
                     AddTriggerLine(lines, "Space", _spaceTriggeredToday, _spaceRollDoneToday);
                     AddTriggerLine(lines, "Whale", _whaleTriggeredToday, _whaleRollDoneToday);
-                }
 
-                var path = GetTriggerStatePath();
-                var tempPath = path + ".tmp";
-                var backupPath = path + ".bak";
-                File.WriteAllLines(tempPath, lines);
-                AtomicFileWriter.Commit(tempPath, path, backupPath);
+                    var path = GetTriggerStatePath();
+                    var tempPath = path + ".tmp";
+                    var backupPath = path + ".bak";
+                    File.WriteAllLines(tempPath, lines);
+                    AtomicFileWriter.Commit(tempPath, path, backupPath);
+                }
             }
             catch (Exception ex)
             {

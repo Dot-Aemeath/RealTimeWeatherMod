@@ -6,18 +6,27 @@ namespace ChillWithYou.EnvSync.Core
     {
         internal static void Commit(string tempPath, string targetPath, string backupPath)
         {
-            if (!File.Exists(targetPath))
+            try
             {
-                File.Move(tempPath, targetPath);
-                return;
+                if (!File.Exists(targetPath))
+                {
+                    File.Move(tempPath, targetPath);
+                    return;
+                }
+
+                if (File.Exists(backupPath))
+                {
+                    File.Delete(backupPath);
+                }
+
+                File.Replace(tempPath, targetPath, backupPath);
+            }
+            catch
+            {
+                try { File.Delete(tempPath); } catch { }
+                throw;
             }
 
-            if (File.Exists(backupPath))
-            {
-                File.Delete(backupPath);
-            }
-
-            File.Replace(tempPath, targetPath, backupPath);
             try { File.Delete(backupPath); } catch { }
         }
     }
