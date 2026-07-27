@@ -359,7 +359,8 @@ namespace ChillWithYou.EnvSync.Core
         {
           DateTime now = DateTime.Now;
           int month = now.Month;
-          if (!((month >= 11 && month <= 12) || (month >= 1 && month <= 2)) || !IsGoodWeather())
+          if (!((month >= 11 && month <= 12) || (month >= 1 && month <= 2)) ||
+              !(IsGoodWeather() || IsSnowyWeather()))
             return false;
           return _hotSpringTriggeredToday;
         },
@@ -367,15 +368,14 @@ namespace ChillWithYou.EnvSync.Core
         {
           DateTime now = DateTime.Now;
           int month = now.Month;
-          if (!((month >= 11 && month <= 12) || (month >= 1 && month <= 2)) || !IsGoodWeather())
+          if (!((month >= 11 && month <= 12) || (month >= 1 && month <= 2)) ||
+              !(IsGoodWeather() || IsSnowyWeather()))
             return false;
           if (_hotSpringTriggeredToday) return true;
           if (_hotSpringRollDoneToday) return false;
 
           _hotSpringRollDoneToday = true;
-          var w = WeatherService.CachedWeather;
-          bool isSnowing = (w != null && w.Code >= 13 && w.Code <= 17);
-          double probability = isSnowing ? 0.30 : 0.05;
+          double probability = IsSnowyWeather() ? 0.30 : 0.05;
 
           if (_random.NextDouble() < probability)
           {
@@ -1146,6 +1146,13 @@ namespace ChillWithYou.EnvSync.Core
       var w = WeatherService.CachedWeather;
       if (w == null) return true;
       return w.Code >= 0 && w.Code <= 9;
+    }
+
+    private bool IsSnowyWeather()
+    {
+      var w = WeatherService.CachedWeather;
+      // 20-25 为雨夹雪~暴雪（心知码空间，OpenMeteo 映射后同样落在此区间）
+      return w != null && w.Code >= 20 && w.Code <= 25;
     }
 
     /// <summary>
