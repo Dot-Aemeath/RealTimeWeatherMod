@@ -48,13 +48,18 @@ UnityExplorerMcp Plugin (BepInEx)
 
 | Tool | 功能 | 典型用途 |
 |------|------|---------|
-| `get_ui_hierarchy` | 遍历所有 Canvas → UI 树 | 查看整体布局结构、获取完整元素路径 |
-| `inspect_element` | 指定路径元素的组件详情 | 查看 Button、Text(TMP)、Image 的具体属性 |
-| `search_elements` | 按名称/类型搜索 UI 元素 | 快速定位特定元素，`componentType` 支持"Text"→自动匹配 TMP |
-| `get_mouse_element` | 当前鼠标下方的 UI 元素 | 想知道鼠标指着什么元素 |
+| `get_ui_hierarchy` | 获取限深 Canvas → UI 树 | 查看局部布局；默认只返回活动对象和 5 层，避免大响应 |
+| `inspect_element` | 按路径或 `instanceId` 查看组件详情 | 精确区分同名对象，查看 Button、Text(TMP)、Image 属性 |
+| `search_elements` | 按名称、路径、可见文本和组件类型搜索 | 优先使用；默认只返回 25 个活动元素及屏幕像素范围 |
+| `get_mouse_element` | 获取鼠标下方的 UI 命中栈 | 跨所有 Canvas 返回最上层开始的多个元素 |
+| `inspect_screen_point` | 按截图坐标获取 UI 命中栈 | 默认使用左上角原点；事件射线无结果时自动按可见图形矩形兜底 |
+| `compare_ui_elements` | 比较两个 UI 元素 | 返回中心、尺寸、边缘差值和重叠范围，适合检查对齐与间距 |
+| `preview_ui_layout` | 临时预览位置和尺寸调整 | 可相对另一控件放置、匹配宽高；返回可回滚的 `previewId` |
+| `rollback_ui_preview` | 回滚临时 UI 调整 | 指定 `previewId` 回滚一组预览；省略则回滚全部 |
+| `search_ui_sprites` | 搜索已加载的 Sprite | 查看尺寸、纹理和最多 5 个使用位置，复用游戏原生视觉样式 |
 | `execute_code` | 在游戏内执行 C# 代码 | 运行任意 C# 查询（返回 8000 字符以内结果） |
 | `get_console_logs` | 获取最近 N 条 Unity 日志 | 排查运行时错误 |
-| `take_screenshot` | 游戏截图（base64 PNG） | AI 看到游戏当前画面 |
+| `take_screenshot` | 游戏截图（base64 PNG） | 可指定输出尺寸来降低传输量，让 AI 查看当前画面 |
 | `list_scenes` | 列出所有场景及根对象 | 了解游戏场景结构 |
 
 ### 典型用法示例
@@ -66,15 +71,60 @@ execute_code("GameObject.FindObjectsOfType<Button>().Length")
 // 分析一个 GameObject 的所有组件
 inspect_element("Canvas/SomePanel/Button")
 
-// 获取完整 UI 树（可用 canvasName 过滤）
-get_ui_hierarchy("SettingsCanvas")
+// 按用户在屏幕上看到的文字查找；关闭的设置面板需要 activeOnly=false
+search_elements({ "query": "天气", "activeOnly": false, "maxResults": 25 })
+
+// 搜索结果会返回 instanceId；同名对象较多时用它精确检查
+inspect_element({ "instanceId": 12345 })
+
+// 只在确实需要结构上下文时读取限深 UI 树
+get_ui_hierarchy({ "canvasName": "SettingsCanvas", "maxDepth": 5 })
+
+// 从 1200×720 截图上点击的位置定位 UI（默认左上角为 0,0）
+inspect_screen_point({ "x": 438, "y": 266, "maxResults": 8 })
+
+// 比较导出按钮与原生新建按钮
+compare_ui_elements({ "instanceIdA": 12345, "instanceIdB": 67890 })
+
+// 把导出按钮临时贴到新建按钮下方并匹配尺寸
+preview_ui_layout({
+  "instanceId": 12345,
+  "referenceInstanceId": 67890,
+  "placement": "below",
+  "gap": 4,
+  "matchWidth": true,
+  "matchHeight": true
+})
+
+// 截图确认后回滚；将上一调用返回的实际 previewId 传入
+rollback_ui_preview({ "previewId": "<previewId>" })
+
+// 查找游戏内现成的圆圈/对勾素材及其使用位置
+search_ui_sprites({ "query": "todo_circle", "maxResults": 20 })
 ```
+
+### 推荐定位流程
+
+1. 用户把鼠标移到需要调整的控件上，调用 `get_mouse_element`。
+2. 已知按钮文案时，先调用 `search_elements`；它会同时匹配 GameObject 名称、完整路径和 Text/TMP 文本。
+3. 使用结果中的 `instanceId` 调用 `inspect_element`，避免同名预制体或隐藏副本造成误判。
+4. 依据 `screenRect` 的屏幕像素范围和 `rectTransform` 的锚点/局部坐标修改 Mod。
+5. 只有需要父子结构时再调用 `get_ui_hierarchy`，并尽量指定 `canvasName` 和较小 `maxDepth`。
+
+调整布局时推荐使用安全闭环：`search_elements` / `inspect_screen_point` 定位 →
+`compare_ui_elements` 量化差异 → `preview_ui_layout` 临时预览 → 截图确认 →
+`rollback_ui_preview` 恢复运行时 UI → 修改并构建 Mod 源码。预览只修改当前游戏内存，
+不会写入资源或源码；同一个 `previewId` 可包含多个元素并一次性回滚。
+
+`search_elements` 默认 `activeOnly=true`、`maxResults=25`。若要检查尚未打开的设置页，显式传入
+`activeOnly=false`。空查询会枚举指定组件，但仍受 `maxResults` 限制，并通过 `totalMatches` /
+`truncated` 告知是否还有更多结果。
 
 ## 协议
 
 - 监听端口：`localhost:8972`
 - 传输：MCP HTTP+SSE (JSON-RPC 2.0)
-- 自动支持 CORS（`Access-Control-Allow-Origin: *`）
+- 仅监听 loopback；不开放浏览器 CORS，避免任意网页调用本地 `execute_code`
 
 ## 项目结构
 
@@ -104,7 +154,10 @@ UnityExplorerMcp/
 ## 已知限制
 
 - `execute_code` 依赖 UnityExplorer 内置的 Mono.CSharp，卸载 UnityExplorer 后不可用
-- 大 UI 树的 JSON 输出会自动截断（超过指定层级）
+- UI 树默认限深；需要更多层级时可将 `maxDepth` 提高到 10
+- `search_ui_sprites` 只能搜索当前已加载的 Sprite；未打开过的界面资源可能尚未加载
+- `preview_ui_layout` 可能被 Unity 的 LayoutGroup 或界面刷新逻辑在下一帧覆盖；这通常说明应修改布局控制器而非子元素坐标
+- 重载场景或销毁预览目标后，该目标无法再回滚；建议预览确认后立即调用 `rollback_ui_preview`
 - SSE 长连接稳定性有待长期测试
 
 ## 未来计划
@@ -113,4 +166,4 @@ UnityExplorerMcp/
 - [ ] 标准 MCP 安装包
 - [ ] 支持更多运行时查询（材质、动画、粒子系统）
 - [ ] Mouse-Inspect 视觉反馈
-- [ ] WebSocket 替代 SSE 传输
+- [ ] 迁移到标准 Streamable HTTP 并支持多客户端会话
