@@ -2,20 +2,21 @@
 
 ## 项目总览
 
-BepInEx 插件（.NET Framework 4.7.2, C# 7.3），为游戏《Chill with You: Lo-Fi Story》同步真实天气。
+BepInEx 插件（.NET Framework 4.7.2），为游戏《Chill with You: Lo-Fi Story》同步真实天气。
 目录结构：`RealTimeWeatherMod/`（主插件）+ `RealTimeWeatherMod.Tests/`（纯逻辑 xUnit 测试，net9.0）+ `UnityExplorerMcp/`（MCP 桥接子项目）。
 
 ## Build & Test
 
-无 .sln 文件，必须指定 csproj 路径构建：
+仓库包含 `RealTimeWeatherMod.slnx`。日常修改优先验证受影响的项目：
 
 ```
-dotnet build RealTimeWeatherMod/RealTimeWeatherMod.csproj
+dotnet build RealTimeWeatherMod/RealTimeWeather.csproj
 dotnet build UnityExplorerMcp/UnityExplorerMcp.csproj     # 编译后自动复制 DLL 到游戏 BepInEx/plugins/
 dotnet test RealTimeWeatherMod.Tests/RealTimeWeatherMod.Tests.csproj
 ```
 
-`$(GameDir)` 默认指向 `D:\SteamLibrary\...`，可通过 `-p:GameDir=...` 覆盖。测试项目 **net9.0**，纯逻辑无 Unity 依赖，可在没有游戏的环境运行。
+主插件和 MCP 都通过 `$(GameDir)` 引用本地游戏程序集；默认路径不可用时传入
+`-p:GameDir="<游戏目录>"`。测试项目不依赖 Unity 或游戏安装。
 
 ## Git 提交规范
 
@@ -28,8 +29,8 @@ dotnet test RealTimeWeatherMod.Tests/RealTimeWeatherMod.Tests.csproj
 - Harmony 自动扫描补丁 + 手动 `UnlockConditionGodMode.ApplyPatches()`
 - 三种 MonoBehaviour：`AutoEnvRunner`（天气轮询+环境切换）、`SceneryAutomationSystem`（彩蛋规则）、`ModSettingsIntegration`（设置面板集成）
 - `WeatherService` 统一调度双数据源（`Seniverse`/`OpenMeteo`），`OpenMeteoWeatherMapper` 将 OpenMeteo weather_code 映射为心知 code
-- 版本号集中管理：`ChillEnvPlugin.PluginVersion`（当前 `5.2.3`）
-- API：心知天气 Seniverse（需 API Key 或内置 Key）+ OpenMeteo（无需 Key，填写经纬度即可）。设置面板可切换数据源
+- 主版本源是 `ChillEnvPlugin.PluginVersion`；不要在 AGENTS 中记录易过期的当前版本号
+- API：心知天气 Seniverse + OpenMeteo；设置面板可切换数据源
 
 ## 反射桥接的游戏类型
 
@@ -65,22 +66,9 @@ dotnet test RealTimeWeatherMod.Tests/RealTimeWeatherMod.Tests.csproj
 
 ## UnityExplorer MCP Bridge
 
-子项目 `UnityExplorerMcp/`，硬依赖 UnityExplorer。MCP 配置见 `.mcp.json`（localhost:8972）。
+子项目 `UnityExplorerMcp/` 使用 C# 7.3、硬依赖 UnityExplorer。MCP 配置见
+`.mcp.json`（loopback 端口 8972）；工具与开发限制见 `UnityExplorerMcp/README.md`。
 
 ## 发布新版本
 
-> ⚠️ 发布新版本前必须向用户确认新版本号，确认后方可继续。
-
-发布新版时需更新以下所有位置的版本号：
-
-| 位置 | 文件 | 说明 |
-|------|------|------|
-| 主版本源 | `ChillEnvPlugin.cs` → `PluginVersion` | BepInEx 插件版本，游戏内显示用 |
-| 程序集版本 | `Properties\AssemblyInfo.cs` | `AssemblyVersion` + `AssemblyFileVersion`，Windows 文件属性 |
-| Thunderstore | `thunderstore/manifest.json` → `version_number` | Thunderstore 发布版本 |
-| 更新日志 | `CHANGELOG.md` | 新增版本标题与变更内容 |
-| 本文档 | `AGENTS.md` → 版本号集中管理行 | 保持文档同步 |
-
-关键 caveat：
-- Mono.CSharp 被 ILMerge 进 UnityExplorer.BIE5.Mono.dll，需 `Reflection.Emit` 创建 `InteractiveBase` 的 public 派生类以绕过 CS0060
-- BepInEx 启动后插件 OnDestroy 被立即调用，HTTP 服务器在后台线程持续运行；主线程调度通过 `SynchronizationContext.Post`
+发布或同步版本号时必须使用项目 skill `$release-realtime-weather`。开始修改前必须先让用户明确确认目标版本号。
