@@ -160,6 +160,11 @@ SimulatedCode = 13
 SimulatedTemp = 13
 ## Simulated weather text
 SimulatedText = DebugWeather
+## Simulated current time; accepts HH:mm[:ss] or a full date and time
+SimulatedDateTime = 12:00
+## Simulated sunrise/sunset; provider refresh cannot overwrite these in debug mode
+SimulatedSunrise = 06:30
+SimulatedSunset = 18:30
 
 [Internal]
 
@@ -218,6 +223,12 @@ CacheExpiryMinutes = 60
 - `WeatherProvider = OpenMeteo`: use OpenMeteo. `Latitude` / `Longitude` are used; no API key is required.
 - If a recent [iGPUSaviorMod](https://github.com/Small-tailqwq/iGPUSaviorMod) is installed, the in-game settings page shows provider-specific fields automatically: city input for Seniverse, latitude/longitude inputs for OpenMeteo.
 
+### Deterministic Debug Scenarios
+
+- Debug mode replaces the weather, current date/time, sunrise, and sunset observed by the mod. Startup and periodic sync use the same simulated inputs, and background sun-schedule requests are paused.
+- `SimulatedDateTime` accepts `17:45` or a full value such as `2026-12-24 23:45` for seasonal-rule testing.
+- Press `F7` after editing the config to reload and apply it immediately. With the repository's UnityExplorer MCP Bridge installed, use `envsync_debug` to set inputs, force application, and compare expected versus actual game state in one call. See [UnityExplorerMcp/README.md](./UnityExplorerMcp/README.md).
+
 ### Get Seniverse API Key (Optional)
 
 > 💡 New versions include a built-in key, so leaving it empty still works. Applying your own key is optional.
@@ -236,7 +247,7 @@ CacheExpiryMinutes = 60
 
 Plugin auto switches environment by configured sunrise/sunset:
 
-- From sunrise to 1 hour before sunset: Day.
+- From sunrise to 30 minutes before sunset: Day.
 - From 30 minutes before sunset to 30 minutes after sunset: Sunset.
 - All other times: Night.
 
@@ -297,25 +308,22 @@ Plugin auto switches environment by configured sunrise/sunset:
 
 - **F9: Manual weather sync**
   - Core purpose:
-    - No network request. Uses current cache and real-time local clock to force a full recalc and apply.
-    - Bypasses debounce check (`if (Current == Target) return`) and executes full switch flow.
+    - Prefer a valid weather cache and the real-time local clock, then recalculate and apply the environment.
+    - If the cache is missing or expired and the current policy needs weather data, the selected provider is queried normally.
   - Trigger behavior:
-    1. Read `_cachedWeather` from memory (if absent, only time logic applies).
+    1. Read a valid cache, or fetch weather when the current sync policy requires it.
     2. Recompute day/sunset/night by current `DateTime.Now`.
-    3. Force execution:
-       - Call `ForceActivateEnvironment`.
-       - Simulate click on `MainIcon` even if already lit.
-       - Force call `WindowViewService.ChangeWeatherAndTime`.
-       - Force write via `SaveDataManager`.
+    3. Reapply the base environment through `GameEnvironmentRuntime` and reconcile precipitation visuals and audio.
   - Recommended when:
     - UI/effects desync occurs.
     - Sunset/sunrise transition does not trigger on time.
-    - Offline mode where F7 cannot fetch online data.
+    - Offline mode while a valid cached weather result is still available.
 
 ## 🔧 Technical Details
 
 - **Framework**: BepInEx 5.x
 - **Target Framework**: .NET Framework 4.7.2
+- **Architecture**: See [docs/architecture.md](./docs/architecture.md) for module boundaries and dependency direction.
 - **Tech / Tools**:
   - Harmony patches (feature injection)
   - Unity coroutines (async web requests)

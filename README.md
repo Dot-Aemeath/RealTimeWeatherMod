@@ -147,6 +147,11 @@ SimulatedCode = 13
 SimulatedTemp = 13
 ## 模拟天气描述
 SimulatedText = DebugWeather
+## 模拟当前时间；支持 HH:mm[:ss]，也可带日期测试季节规则
+SimulatedDateTime = 12:00
+## 模拟日出/日落；调试模式下不会被天气源后台同步覆盖
+SimulatedSunrise = 06:30
+SimulatedSunset = 18:30
 
 [Internal]
 
@@ -205,6 +210,12 @@ CacheExpiryMinutes = 60
 - `WeatherProvider = OpenMeteo`：使用 OpenMeteo。`Latitude` / `Longitude` 生效，不需要 API Key。
 - 如果安装了新版 [iGPUSaviorMod](https://github.com/Small-tailqwq/iGPUSaviorMod)，设置页会根据天气源自动显示对应配置项：心知天气显示城市输入框，OpenMeteo 显示经纬度输入框。
 
+### 确定性调试场景
+
+- 调试模式统一替换 Mod 看到的天气、当前日期时间、日出和日落；启动同步与常规定时同步使用同一组模拟输入，并暂停后台日出日落请求。
+- `SimulatedDateTime` 可写 `17:45`，也可写 `2026-12-24 23:45` 来测试季节和彩蛋时间条件。
+- 修改配置后按 `F7` 会立即重载并应用。安装仓库内的 UnityExplorer MCP Bridge 后，推荐使用 `envsync_debug` 一次完成参数写入、强制应用及“期望状态 vs 游戏实际状态”验证，详见 [UnityExplorerMcp/README.md](./UnityExplorerMcp/README.md)。
+
 ### 获取心知天气 API Key（可选）
 > 💡 新版本内置密钥，留空也可用天气服务。自己申请也可用，看个人喜好
 
@@ -221,7 +232,7 @@ CacheExpiryMinutes = 60
 ### 基础使用（默认开启）
 
 插件默认会根据配置的日出日落时间自动切换环境：
-- 日出后到日落前 1 小时：白天
+- 日出后到日落前 30 分钟：白天
 - 日落前 30 分钟到日落后 30 分钟：黄昏
 - 其他时间：夜晚
 
@@ -281,30 +292,22 @@ CacheExpiryMinutes = 60
 	- 打印一条日志
 - **F9**：手动触发一次天气同步
 	- 核心目的：
-	  - 不联网，使用当前已有的天气缓存和实时的本地时间，强制重新计算并应用游戏环境。
-	  - 关键点：它会绕过“防抖动”检查（即 if (Current == Target) return），强制执行一次完整的环境切换流程（关灯 -> 开灯 -> 服务同步）。
+	  - 优先使用有效天气缓存和实时本地时间，重新计算并应用游戏环境。
+	  - 若缓存不存在或已经过期，且当前配置需要天气数据，则会正常请求所选天气源。
 	- 触发行为：
-	  1. 读取缓存：直接读取内存中的 _cachedWeather（如果没缓存，只算时间）。
+	  1. 读取有效缓存；不可用时按当前同步策略获取天气。
 	  2. 重算时间：根据当前秒数 (DateTime.Now)，重新计算是白天、黄昏还是夜晚。
-	
-	  3. 暴力执行：
-	
-	     - 调用 ForceActivateEnvironment。
-	
-	     - 强制模拟点击 MainIcon（即使它看起来是亮着的）。
-	
-	     - 强制调用 WindowViewService.ChangeWeatherAndTime。
-	
-	     - 强制写入 SaveDataManager。
+	  3. 通过 `GameEnvironmentRuntime` 重新应用基底环境，并校准降水窗景与环境音状态。
 	- 适用场景：
 	  - 修复错位：比如游戏 UI 显示是“雨天”，但画面上雨停了；或者声音还在响，但图标灭了。按 F9 可以“踢”一下游戏，让它回正。
 	  - 日落/日出测试：当你觉得时间到了（比如17:30），但游戏没切黄昏（可能是快钟还没跳），按 F9 可以立即触发时间判断。
-	  - 无网状态：断网时，F7 会失败，但 F9 可以用来刷新本地时间逻辑（白天/夜晚切换）。
+	  - 无网状态：有效缓存仍存在时，F9 可以刷新本地时间逻辑和现有天气效果。
 
 ## 🔧 技术细节
 
 - **框架**：BepInEx 5.x
 - **目标框架**：.NET Framework 4.7.2
+- **架构**：模块边界与依赖方向见 [docs/architecture.md](./docs/architecture.md)
 - **使用技术/工具**：
   - Harmony 补丁（用于游戏功能注入）
   - Unity 协程（用于异步网络请求）
