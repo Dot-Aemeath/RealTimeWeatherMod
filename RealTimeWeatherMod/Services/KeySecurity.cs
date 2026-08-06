@@ -7,7 +7,7 @@ namespace ChillWithYou.EnvSync.Services
 {
   /// <summary>
   /// API Key 加密/解密工具类
-  /// 防君子不防小人，不要滥用key，不然我会直接停了
+  /// 这是降低误用便利度的混淆，不是秘密存储；决策背景见 docs/adr/0001-bundled-seniverse-key.md。
   /// </summary>
   internal static class KeySecurity
   {

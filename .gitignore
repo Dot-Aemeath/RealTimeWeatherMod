@@ -4,7 +4,11 @@
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 # 文档
-docs
+**/docs/
+!/docs/
+/docs/*
+!/docs/adr/
+!/docs/architecture.md
 
 # User-specific files
 *.rsuser
