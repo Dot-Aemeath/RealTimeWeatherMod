@@ -202,7 +202,7 @@ EnableWeatherSync = false
 WeatherProvider = OpenMeteo
 ## Seniverse API key | v5.1.2+ can use built-in key when left empty
 SeniverseKey =
-## Seniverse city name (Pinyin or Chinese, e.g. beijing, 上海). Use ip for auto locate
+## Seniverse city name (Pinyin or Chinese, e.g. beijing, 上海). Use ip for auto locate; empty means ip
 Location = beijing
 ## OpenMeteo latitude, valid range [-90, 90]
 Latitude = 39.9042
@@ -219,7 +219,7 @@ CacheExpiryMinutes = 60
 
 ### Weather Provider Selection
 
-- `WeatherProvider = Seniverse`: use Seniverse. `Location` is used; `SeniverseKey` may be left empty to use the built-in key.
+- `WeatherProvider = Seniverse`: use Seniverse. `Location` is used; `SeniverseKey` may be left empty to use the built-in key. An empty `Location` falls back to `ip` auto-location rather than stopping sync.
 - `WeatherProvider = OpenMeteo`: use OpenMeteo. `Latitude` / `Longitude` are used; no API key is required.
 - If a recent [iGPUSaviorMod](https://github.com/Small-tailqwq/iGPUSaviorMod) is installed, the in-game settings page shows provider-specific fields automatically: city input for Seniverse, latitude/longitude inputs for OpenMeteo.
 

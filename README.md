@@ -189,7 +189,7 @@ EnableWeatherSync = false
 WeatherProvider = OpenMeteo
 ## 心知天气 API Key | v5.1.2版本后，留空可直接使用内置密钥
 SeniverseKey = 
-## 心知天气城市名称（拼音或中文，如：beijing、上海，ip 表示自动定位）
+## 心知天气城市名称（拼音或中文，如：beijing、上海，ip 表示自动定位；留空等同于 ip）
 Location = beijing
 ## OpenMeteo 纬度，有效范围 [-90, 90]
 Latitude = 39.9042
@@ -206,7 +206,7 @@ CacheExpiryMinutes = 60
 
 ### 天气数据源选择
 
-- `WeatherProvider = Seniverse`：使用心知天气。`Location` 生效，`SeniverseKey` 留空时使用内置 Key。
+- `WeatherProvider = Seniverse`：使用心知天气。`Location` 生效，`SeniverseKey` 留空时使用内置 Key。`Location` 留空则按 `ip` 自动定位，而不是停止同步。
 - `WeatherProvider = OpenMeteo`：使用 OpenMeteo。`Latitude` / `Longitude` 生效，不需要 API Key。
 - 如果安装了新版 [iGPUSaviorMod](https://github.com/Small-tailqwq/iGPUSaviorMod)，设置页会根据天气源自动显示对应配置项：心知天气显示城市输入框，OpenMeteo 显示经纬度输入框。
 
