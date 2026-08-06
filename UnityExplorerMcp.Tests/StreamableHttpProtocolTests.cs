@@ -387,6 +387,27 @@ namespace UnityExplorerMcp.Tests
         }
 
         [Fact]
+        public void WireReader_InvalidUtf8ThrowsDecoderFallbackSoServerCanReturn400()
+        {
+            byte[] invalidBody = { 0xC3, 0x28 };
+            var header = Encoding.ASCII.GetBytes(
+                "POST /mcp HTTP/1.1\r\n" +
+                "Host: localhost:8972\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Accept: application/json, text/event-stream\r\n" +
+                "MCP-Protocol-Version: 2026-07-28\r\n" +
+                "Mcp-Method: server/discover\r\n" +
+                "Content-Length: " + invalidBody.Length + "\r\n\r\n");
+            var raw = new byte[header.Length + invalidBody.Length];
+            Buffer.BlockCopy(header, 0, raw, 0, header.Length);
+            Buffer.BlockCopy(invalidBody, 0, raw, header.Length, invalidBody.Length);
+            using var stream = new MemoryStream(raw);
+
+            Assert.Throws<DecoderFallbackException>(
+                () => McpHttpWire.ReadRequest(stream, 1024 * 1024));
+        }
+
+        [Fact]
         public void Post_RequiresExplicitBodyFraming()
         {
             McpHttpRequest request = CurrentPost("no-framing", "server/discover");

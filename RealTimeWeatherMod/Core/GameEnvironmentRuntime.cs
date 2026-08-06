@@ -742,12 +742,7 @@ namespace ChillWithYou.EnvSync.Core
                 soundActive = !dataService.IsMute(controller.AmbientSoundType);
                 FieldInfo sliderField = AccessTools.Field(ambientBehavior.GetType(), "_volumeSlider");
                 var slider = sliderField?.GetValue(ambientBehavior) as Slider;
-                if (slider == null)
-                {
-                    return false;
-                }
-
-                liveSoundActive = slider.value > 0f;
+                liveSoundActive = slider != null && slider.value > 0f;
                 return true;
             }
             catch (Exception ex)

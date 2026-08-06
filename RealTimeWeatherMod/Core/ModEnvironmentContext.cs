@@ -66,11 +66,22 @@ namespace ChillWithYou.EnvSync.Core
                 Sunrise = FormatTime(configuredSunrise),
                 Sunset = FormatTime(configuredSunset)
             };
-            DebugScenario.TryCreate(
-                fallbackInput,
-                systemNow,
-                out var fallback,
-                out _);
+            if (!DebugScenario.TryCreate(
+                    fallbackInput,
+                    systemNow,
+                    out var fallback,
+                    out _))
+            {
+                // 生产日出日落配置同样非法时（如倒挂）退回默认时间表。
+                // 默认 06:30/18:30 恒满足跨字段校验，快照因此始终可用。
+                fallbackInput.Sunrise = FormatTime(DefaultSunrise);
+                fallbackInput.Sunset = FormatTime(DefaultSunset);
+                DebugScenario.TryCreate(
+                    fallbackInput,
+                    systemNow,
+                    out fallback,
+                    out _);
+            }
 
             return CreateSnapshot(
                 true,
@@ -96,9 +107,12 @@ namespace ChillWithYou.EnvSync.Core
                 return systemNow;
             }
 
-            return DebugScenario.ResolveNow(
-                ChillEnvPlugin.Cfg_DebugCurrentDateTime?.Value,
-                systemNow);
+            // 与 Capture() 使用同一场景判定：整体非法（如日出日落倒挂）
+            // 时同样回落真实时钟，避免 UI 与决策在同一轮看到不同时间。
+            var input = ReadDebugInput();
+            return DebugScenario.TryCreate(input, systemNow, out var scenario, out _)
+                ? scenario.Now
+                : systemNow;
         }
 
         internal static DebugScenarioInput ReadDebugInput()

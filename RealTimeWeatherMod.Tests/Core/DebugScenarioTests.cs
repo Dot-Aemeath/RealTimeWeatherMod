@@ -110,26 +110,6 @@ namespace RealTimeWeatherMod.Tests.Core
             Assert.Equal("DebugWeather", state.Weather.Text);
         }
 
-        [Fact]
-        public void ResolveNow_UsesSimulatedTimeOfDayOnTheSystemDate()
-        {
-            var systemNow = new DateTime(2026, 8, 6, 3, 15, 0);
-
-            DateTime now = DebugScenario.ResolveNow("21:45", systemNow);
-
-            Assert.Equal(new DateTime(2026, 8, 6, 21, 45, 0), now);
-        }
-
-        [Fact]
-        public void ResolveNow_FallsBackToSystemClockWhenUnparseable()
-        {
-            var systemNow = new DateTime(2026, 8, 6, 3, 15, 0);
-
-            Assert.Equal(systemNow, DebugScenario.ResolveNow("not-a-time", systemNow));
-            Assert.Equal(systemNow, DebugScenario.ResolveNow(string.Empty, systemNow));
-            Assert.Equal(systemNow, DebugScenario.ResolveNow(null, systemNow));
-        }
-
         private static DebugScenarioInput CreateInput(
             string currentDateTime = "12:00",
             string sunrise = "06:30",

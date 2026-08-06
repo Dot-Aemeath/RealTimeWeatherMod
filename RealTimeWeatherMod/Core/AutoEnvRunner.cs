@@ -198,7 +198,7 @@ namespace ChillWithYou.EnvSync.Core
 
             if (Time.time >= _nextWeatherCheckTime)
             {
-                TriggerSync(true, false, true);
+                TriggerSync(false, false, true);
             }
         }
 

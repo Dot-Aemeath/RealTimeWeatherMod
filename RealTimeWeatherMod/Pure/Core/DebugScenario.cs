@@ -147,18 +147,6 @@ namespace ChillWithYou.EnvSync.Core
             return DebugTimeSegment.Night;
         }
 
-        /// <summary>
-        /// The simulated clock alone, for edge callers that need the time and nothing
-        /// else. Unparseable input falls back to the real clock, matching what
-        /// ModEnvironmentContext does when a whole scenario fails validation.
-        /// </summary>
-        internal static DateTime ResolveNow(string configuredDateTime, DateTime systemNow)
-        {
-            return TryParseCurrentDateTime(configuredDateTime, systemNow, out var now)
-                ? now
-                : systemNow;
-        }
-
         private static bool TryParseCurrentDateTime(
             string value,
             DateTime systemNow,
