@@ -336,7 +336,7 @@ namespace UnityExplorerMcp.MCP
                     throw new InvalidDataException("Incomplete chunked HTTP body");
                 }
 
-                body = StrictUtf8.GetString(
+                body = DecodeBody(
                     decodedChunkedBody,
                     0,
                     decodedChunkedBody.Length);
@@ -345,7 +345,7 @@ namespace UnityExplorerMcp.MCP
             {
                 body = contentLength == 0
                     ? string.Empty
-                    : StrictUtf8.GetString(buffer, bodyStart, contentLength);
+                    : DecodeBody(buffer, bodyStart, contentLength);
             }
 
             return new McpHttpRequest
@@ -356,6 +356,24 @@ namespace UnityExplorerMcp.MCP
                 Body = body,
                 HasBodyFraming = hasContentLength || isChunked
             };
+        }
+
+        /// <summary>
+        /// Undecodable bytes are a malformed request like any other, so they surface
+        /// as InvalidDataException — the one exception type ReadRequest promises its
+        /// caller for bad input. A DecoderFallbackException escaping here would miss
+        /// the caller's 400 path and drop the connection instead.
+        /// </summary>
+        private static string DecodeBody(byte[] buffer, int offset, int count)
+        {
+            try
+            {
+                return StrictUtf8.GetString(buffer, offset, count);
+            }
+            catch (DecoderFallbackException ex)
+            {
+                throw new InvalidDataException("HTTP body is not valid UTF-8", ex);
+            }
         }
 
         private static bool TryDecodeChunkedBody(

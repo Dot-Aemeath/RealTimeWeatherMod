@@ -387,8 +387,11 @@ namespace UnityExplorerMcp.Tests
         }
 
         [Fact]
-        public void WireReader_InvalidUtf8ThrowsDecoderFallbackSoServerCanReturn400()
+        public void WireReader_InvalidUtf8SurfacesAsInvalidDataSoServerReturns400()
         {
+            // McpServer.HandleClient turns InvalidDataException into 400. Any other
+            // exception type escapes to the outer handler and drops the connection
+            // with no response, so the exact type is the contract being asserted.
             byte[] invalidBody = { 0xC3, 0x28 };
             var header = Encoding.ASCII.GetBytes(
                 "POST /mcp HTTP/1.1\r\n" +
@@ -403,8 +406,9 @@ namespace UnityExplorerMcp.Tests
             Buffer.BlockCopy(invalidBody, 0, raw, header.Length, invalidBody.Length);
             using var stream = new MemoryStream(raw);
 
-            Assert.Throws<DecoderFallbackException>(
+            var error = Assert.Throws<InvalidDataException>(
                 () => McpHttpWire.ReadRequest(stream, 1024 * 1024));
+            Assert.IsType<DecoderFallbackException>(error.InnerException);
         }
 
         [Fact]
