@@ -226,9 +226,10 @@ namespace ChillWithYou.EnvSync.Patches
                 {
                     ChillEnvPlugin.Cfg_WeatherProvider.Value = val;
                     ChillEnvPlugin.Instance.Config.Save();
-                    Services.WeatherService.InvalidateCache();
+                    Services.WeatherAcquisitionRuntime.Invalidate();
                     ChillEnvPlugin.Log?.LogInfo($"[设置] 天气数据源已设置为: {val}");
                     Core.AutoEnvRunner.TriggerWeatherRefresh();
+                    Core.AutoEnvRunner.TriggerSunScheduleRefresh();
                 };
 
                 AddDropdownSafe(managerInstance, managerType,
@@ -256,7 +257,7 @@ namespace ChillWithYou.EnvSync.Patches
                     {
                         ChillEnvPlugin.Cfg_Location.Value = val;
                         ChillEnvPlugin.Instance.Config.Save();
-                        Services.WeatherService.InvalidateCache();
+                        Services.WeatherAcquisitionRuntime.Invalidate();
                         if (_locationDebounceCoroutine != null)
                         {
                             StopCoroutine(_locationDebounceCoroutine);
@@ -567,7 +568,7 @@ namespace ChillWithYou.EnvSync.Patches
                     ChillEnvPlugin.Cfg_OpenMeteoLongitude.Value = result;
 
                 ChillEnvPlugin.Instance.Config.Save();
-                Services.WeatherService.InvalidateCache();
+                Services.WeatherAcquisitionRuntime.Invalidate();
 
                 ChillEnvPlugin.Log?.LogInfo($"[设置] OpenMeteo {name} 已设置为: {result:F4}");
 
