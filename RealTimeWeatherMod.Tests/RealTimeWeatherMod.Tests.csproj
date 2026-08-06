@@ -15,17 +15,23 @@
     </PackageReference>
   </ItemGroup>
 
+  <!--
+    The whole of RealTimeWeatherMod\Pure\, globbed rather than listed. This project
+    references no Unity, BepInEx or game assembly, so it is what enforces the seam:
+    a pure module that reaches for Unity fails to compile here, and a newly added pure
+    module is picked up automatically instead of silently going untested.
+  -->
   <ItemGroup>
-    <Compile Include="..\RealTimeWeatherMod\Core\AtomicFileWriter.cs" Link="Core\AtomicFileWriter.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Core\AutoManagedStateCodec.cs" Link="Core\AutoManagedStateCodec.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Core\CombinedEnvironmentStatePolicy.cs" Link="Core\CombinedEnvironmentStatePolicy.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Core\SceneryAutomationTriggerStateCodec.cs" Link="Core\SceneryAutomationTriggerStateCodec.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Services\DecorationUnlockScanner.cs" Link="Services\DecorationUnlockScanner.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Core\SceneryAutomationCleanupPolicy.cs" Link="Core\SceneryAutomationCleanupPolicy.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Core\SyncPolicy.cs" Link="Core\SyncPolicy.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Core\StartupWeatherSyncPolicy.cs" Link="Core\StartupWeatherSyncPolicy.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Core\WeatherUiState.cs" Link="Core\WeatherUiState.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Models\WeatherData.cs" Link="Models\WeatherData.cs" />
-    <Compile Include="..\RealTimeWeatherMod\Services\OpenMeteoWeatherMapper.cs" Link="Services\OpenMeteoWeatherMapper.cs" />
+    <Compile Include="..\RealTimeWeatherMod\Pure\**\*.cs" Link="Pure\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    These edge adapters are deliberately outside Pure, but remain cheap to test
+    because their dependencies are limited to the BCL. Keep the inclusion explicit
+    so adding another edge file never silently widens the enforced Pure boundary.
+  -->
+  <ItemGroup>
+    <Compile Include="..\RealTimeWeatherMod\Core\AtomicFileWriter.cs" Link="Edge\Core\AtomicFileWriter.cs" />
+    <Compile Include="..\RealTimeWeatherMod\Services\DecorationUnlockScanner.cs" Link="Edge\Services\DecorationUnlockScanner.cs" />
   </ItemGroup>
 </Project>

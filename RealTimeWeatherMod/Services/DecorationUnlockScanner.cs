@@ -5,6 +5,7 @@ using System.Reflection;
 
 namespace ChillWithYou.EnvSync.Services
 {
+    // Reflection adapter for version-dependent game object layouts.
     internal static class DecorationUnlockScanner
     {
         private static readonly BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;

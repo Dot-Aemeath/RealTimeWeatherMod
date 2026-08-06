@@ -2,6 +2,7 @@ using System.IO;
 
 namespace ChillWithYou.EnvSync.Core
 {
+    // Filesystem adapter kept at the application edge; callers own serialization.
     internal static class AtomicFileWriter
     {
         internal static void Commit(string tempPath, string targetPath, string backupPath)
