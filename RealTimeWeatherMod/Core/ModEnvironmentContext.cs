@@ -82,6 +82,25 @@ namespace ChillWithYou.EnvSync.Core
                 fallback.Weather);
         }
 
+        /// <summary>
+        /// The effective clock alone, for edge callers that need the time and nothing
+        /// else — a per-second UI hook has no use for the weather or the sun schedule.
+        /// Anything that makes an environment decision must still take a full snapshot
+        /// through <see cref="Capture"/> and pass it down.
+        /// </summary>
+        internal static DateTime Now()
+        {
+            DateTime systemNow = DateTime.Now;
+            if (ChillEnvPlugin.Cfg_DebugMode?.Value != true)
+            {
+                return systemNow;
+            }
+
+            return DebugScenario.ResolveNow(
+                ChillEnvPlugin.Cfg_DebugCurrentDateTime?.Value,
+                systemNow);
+        }
+
         internal static DebugScenarioInput ReadDebugInput()
         {
             return new DebugScenarioInput

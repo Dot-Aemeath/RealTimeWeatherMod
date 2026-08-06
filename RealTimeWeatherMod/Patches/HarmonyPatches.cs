@@ -63,7 +63,7 @@ namespace ChillWithYou.EnvSync.Patches
                     if (timeFormat.ToString() != "AMPM") return;
 
                     // 计算时间段文本 (已修改为 C# 7.3 兼容写法)
-                    int hour = ModEnvironmentContext.Capture().Now.Hour;
+                    int hour = ModEnvironmentContext.Now().Hour;
                     string timeSegment = "晚上"; // 默认
 
                     if (hour >= 0 && hour < 5) timeSegment = "凌晨";
