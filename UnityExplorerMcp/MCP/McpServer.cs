@@ -3,42 +3,43 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 using BepInEx.Logging;
-using UnityExplorerMcp.MCP.Tools;
 using UnityExplorerMcp.Core;
+using UnityExplorerMcp.MCP.Tools;
 
 namespace UnityExplorerMcp.MCP
 {
-    internal class McpServer
+    /// <summary>
+    /// Local TCP host for the Streamable HTTP module. Registration and lifecycle
+    /// are the complete external interface; HTTP and JSON-RPC details stay behind it.
+    /// </summary>
+    internal sealed class McpServer
     {
         private const int MaxRequestBytes = 1024 * 1024;
+
         private readonly int _port;
         private readonly ManualLogSource _logger;
+        private readonly ToolRegistry _toolRegistry;
+        private readonly StreamableHttpProtocol _protocol;
         private TcpListener _listener;
         private CancellationTokenSource _cts;
-        private readonly ToolRegistry _toolRegistry;
 
-        // SSE state
-        private TcpClient _sseClient;
-        private NetworkStream _sseStream;
-        private StreamWriter _sseWriter;
-        private readonly object _sseLock = new object();
-
-        public McpServer(int port, ManualLogSource logger)
+        internal McpServer(int port, ManualLogSource logger)
         {
             _port = port;
-            _logger = logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _toolRegistry = new ToolRegistry();
+            var jsonRpc = new McpJsonRpcHandler(_toolRegistry, ExecuteTool);
+            _protocol = new StreamableHttpProtocol(port, jsonRpc);
         }
 
-        public void RegisterTool(IMcpTool tool)
+        internal void RegisterTool(IMcpTool tool)
         {
             _toolRegistry.Register(tool);
         }
 
-        public void Start()
+        internal void Start()
         {
             _cts = new CancellationTokenSource();
             _listener = new TcpListener(IPAddress.Loopback, _port);
@@ -47,29 +48,25 @@ namespace UnityExplorerMcp.MCP
             var thread = new Thread(AcceptClients)
             {
                 IsBackground = true,
-                Name = "MCP-HTTP"
+                Name = "MCP-Streamable-HTTP"
             };
             thread.Start();
 
-            _logger.LogInfo($"[UnityExplorerMcp] MCP server listening on http://localhost:{_port}/");
-            _logger.LogInfo($"[UnityExplorerMcp] Tools: {_toolRegistry.GetToolDescriptions().Count} registered");
+            _logger.LogInfo(
+                "[UnityExplorerMcp] Streamable HTTP listening on http://localhost:" +
+                _port + StreamableHttpProtocol.EndpointPath);
+            _logger.LogInfo(
+                "[UnityExplorerMcp] Protocol versions: " +
+                string.Join(", ", McpJsonRpcHandler.GetSupportedProtocolVersions()));
+            _logger.LogInfo(
+                "[UnityExplorerMcp] Tools: " +
+                _toolRegistry.GetToolDescriptions().Count + " registered");
         }
 
-        public void Stop()
+        internal void Stop()
         {
             _cts?.Cancel();
-            CloseSse();
             _listener?.Stop();
-        }
-
-        private void CloseSse()
-        {
-            lock (_sseLock)
-            {
-                if (_sseWriter != null) { _sseWriter.Flush(); _sseWriter.Dispose(); _sseWriter = null; }
-                if (_sseStream != null) { _sseStream.Dispose(); _sseStream = null; }
-                if (_sseClient != null) { _sseClient.Close(); _sseClient = null; }
-            }
         }
 
         private void AcceptClients()
@@ -78,13 +75,16 @@ namespace UnityExplorerMcp.MCP
             {
                 try
                 {
-                    var client = _listener.AcceptTcpClient();
+                    TcpClient client = _listener.AcceptTcpClient();
                     ThreadPool.QueueUserWorkItem(HandleClient, client);
                 }
-                catch when (_cts.IsCancellationRequested) { break; }
+                catch when (_cts.IsCancellationRequested)
+                {
+                    break;
+                }
                 catch (Exception ex)
                 {
-                    _logger.LogError($"[UnityExplorerMcp] Accept error: {ex.Message}");
+                    _logger.LogError("[UnityExplorerMcp] Accept error: " + ex.Message);
                 }
             }
         }
@@ -97,308 +97,63 @@ namespace UnityExplorerMcp.MCP
                 client.ReceiveTimeout = 15000;
                 client.SendTimeout = 15000;
                 using (client)
-                using (var stream = client.GetStream())
+                using (NetworkStream stream = client.GetStream())
                 {
-                    var buffer = new byte[8192];
-                    int totalRead = 0;
-                    int bodyStart = -1;
-                    int contentLength = 0;
-                    string firstLine = null;
-
-                    while (true)
+                    McpHttpRequest request;
+                    try
                     {
-                        if (totalRead >= buffer.Length)
-                        {
-                            if (totalRead >= MaxRequestBytes)
-                                throw new InvalidDataException("HTTP request exceeds 1 MiB limit");
-                            Array.Resize(ref buffer, Math.Min(buffer.Length * 2, MaxRequestBytes));
-                        }
-
-                        int read = stream.Read(buffer, totalRead, buffer.Length - totalRead);
-                        if (read <= 0) break;
-                        totalRead += read;
-
-                        if (firstLine == null)
-                        {
-                            var headerStr = Encoding.UTF8.GetString(buffer, 0, totalRead);
-                            int idx = headerStr.IndexOf("\r\n", StringComparison.Ordinal);
-                            if (idx >= 0) firstLine = headerStr.Substring(0, idx);
-                        }
-
-                        if (bodyStart < 0)
-                        {
-                            var headerStr = Encoding.UTF8.GetString(buffer, 0, totalRead);
-                            int idx = headerStr.IndexOf("\r\n\r\n", StringComparison.Ordinal);
-                            if (idx >= 0)
-                            {
-                                bodyStart = idx + 4;
-                                foreach (var line in headerStr.Substring(0, idx).Split('\n'))
-                                {
-                                    var l = line.Trim();
-                                    if (l.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                                        int.TryParse(l.Substring(15).Trim(), out contentLength);
-                                }
-                                if (contentLength < 0 || contentLength > MaxRequestBytes - bodyStart)
-                                    throw new InvalidDataException("Invalid or oversized Content-Length");
-                            }
-                        }
-
-                        if (bodyStart >= 0 && totalRead >= bodyStart + contentLength)
-                            break;
+                        request = McpHttpWire.ReadRequest(stream, MaxRequestBytes);
                     }
-
-                    bool isGet = firstLine != null && firstLine.StartsWith("GET");
-                    bool isPost = firstLine != null && firstLine.StartsWith("POST");
-                    bool isOptions = firstLine != null && firstLine.StartsWith("OPTIONS");
-
-                    if (isOptions)
+                    catch (InvalidDataException)
                     {
-                        // Native MCP clients do not need CORS. Deliberately omit
-                        // Access-Control-Allow-Origin so arbitrary web pages cannot
-                        // invoke execute_code through the user's localhost.
-                        var resp = "HTTP/1.1 204 No Content\r\n\r\n";
-                        var respBytes = Encoding.UTF8.GetBytes(resp);
-                        stream.Write(respBytes, 0, respBytes.Length);
+                        McpHttpWire.WriteResponse(
+                            stream,
+                            McpHttpResponse.Text(400, "Bad Request"));
                         return;
                     }
 
-                    if (isGet)
+                    if (request == null)
                     {
-                        HandleSseConnection(client, stream);
-                        return; // SSE keeps the connection alive in the method above
-                    }
-
-                    if (isPost && bodyStart >= 0)
-                    {
-                        string body = Encoding.UTF8.GetString(buffer, bodyStart, totalRead - bodyStart);
-                        HandlePostRequest(stream, body);
+                        // Port readiness probes may connect and close without an
+                        // HTTP request. Nothing remains to receive a response.
                         return;
                     }
+
+                    McpHttpWire.WriteResponse(
+                        stream,
+                        _protocol.CreateResponse(request));
                 }
+            }
+            catch (IOException)
+            {
+                // Client disconnects and request timeouts are normal transport events.
             }
             catch (Exception ex)
             {
-                _logger.LogError($"[UnityExplorerMcp] Handle error: {ex.Message}");
+                _logger.LogError("[UnityExplorerMcp] Handle error: " + ex.Message);
             }
         }
 
-        private void HandleSseConnection(TcpClient client, NetworkStream stream)
+        private static McpContentItem ExecuteTool(
+            IMcpTool tool,
+            Dictionary<string, object> arguments)
         {
-            lock (_sseLock)
+            if (tool is MainThreadTool mainThreadTool)
             {
-                if (_sseWriter != null) { try { _sseWriter.Dispose(); } catch { } }
-                if (_sseStream != null) { try { _sseStream.Dispose(); } catch { } }
-                if (_sseClient != null) { try { _sseClient.Close(); } catch { } }
-                _sseClient = client;
-                _sseStream = stream;
-                // Encoding.UTF8 emits a BOM on first write under .NET Framework.
-                // A BOM before "HTTP/1.1" makes strict HTTP/MCP clients reject the response.
-                _sseWriter = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
+                object result = MainThreadDispatcher.Execute(
+                    () => (object)mainThreadTool.ExecuteOnMain(arguments));
+                return (McpContentItem)result;
             }
 
-            lock (_sseLock)
+            object toolResult = tool.Execute(arguments);
+            string text = toolResult is string value
+                ? value
+                : JsonHelper.Serialize(toolResult);
+            return new McpContentItem
             {
-                try
-                {
-                    _sseWriter.Write("HTTP/1.1 200 OK\r\n");
-                    _sseWriter.Write("Content-Type: text/event-stream\r\n");
-                    _sseWriter.Write("Cache-Control: no-cache\r\n");
-                    _sseWriter.Write("Connection: keep-alive\r\n");
-                    _sseWriter.Write("\r\n");
-                    _sseWriter.Flush();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"[UnityExplorerMcp] SSE header error: {ex.Message}");
-                    return;
-                }
-            }
-
-            _logger.LogInfo("[UnityExplorerMcp] SSE connection established");
-
-            SendSseEvent("endpoint", "/");
-
-            try
-            {
-                int tick = 0;
-                while (!_cts.IsCancellationRequested && client.Connected)
-                {
-                    Thread.Sleep(1000);
-                    tick++;
-                    if (tick % 5 == 0)
-                    {
-                        lock (_sseLock)
-                        {
-                            try { if (_sseWriter != null) { _sseWriter.Write(": keepalive\r\n\r\n"); _sseWriter.Flush(); } } catch { }
-                        }
-                    }
-                }
-            }
-            catch { }
-            finally
-            {
-                lock (_sseLock)
-                {
-                    if (_sseWriter != null) { _sseWriter.Dispose(); _sseWriter = null; }
-                    if (_sseStream != null) { _sseStream.Dispose(); _sseStream = null; }
-                    if (_sseClient != null) { _sseClient.Close(); _sseClient = null; }
-                }
-                _logger.LogInfo("[UnityExplorerMcp] SSE connection closed");
-            }
-        }
-
-        private void SendSseEvent(string eventName, string data)
-        {
-            lock (_sseLock)
-            {
-                try
-                {
-                    if (_sseWriter != null)
-                    {
-                        _sseWriter.Write("event: " + eventName + "\r\n");
-                        _sseWriter.Write("data: " + data + "\r\n");
-                        _sseWriter.Write("\r\n");
-                        _sseWriter.Flush();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"[UnityExplorerMcp] SSE send error: {ex.Message}");
-                }
-            }
-        }
-
-        private void HandlePostRequest(NetworkStream stream, string body)
-        {
-            string response = ProcessMcpRequest(body);
-            var respBytes = Encoding.UTF8.GetBytes(response);
-
-            lock (_sseLock)
-            {
-                try
-                {
-                    if (_sseWriter != null)
-                    {
-                        var header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + respBytes.Length + "\r\n\r\n";
-                        var headerBytes = Encoding.UTF8.GetBytes(header);
-                        stream.Write(headerBytes, 0, headerBytes.Length);
-                        stream.Write(respBytes, 0, respBytes.Length);
-                        // try to push over SSE too
-                        _sseWriter.Write("event: message\r\n");
-                        _sseWriter.Write("data: " + response + "\r\n");
-                        _sseWriter.Write("\r\n");
-                        _sseWriter.Flush();
-                        return;
-                    }
-                }
-                catch { }
-            }
-
-            // No SSE fallback: just write HTTP directly
-            var header2 = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + respBytes.Length + "\r\n\r\n";
-            var headerBytes2 = Encoding.UTF8.GetBytes(header2);
-            stream.Write(headerBytes2, 0, headerBytes2.Length);
-            stream.Write(respBytes, 0, respBytes.Length);
-        }
-
-        private string ProcessMcpRequest(string body)
-        {
-            var req = JsonHelper.DeserializeSimple(body);
-            if (req == null || !req.ContainsKey("method"))
-                return JsonHelper.SerializeJsonRpcError(0, -32700, "Parse error");
-
-            var idObj = req.TryGetValue("id", out var idVal) ? idVal : null;
-            long id = 0;
-            if (idObj is long l) id = l;
-            else if (idObj is int i) id = i;
-            else if (idObj is double d) id = (long)d;
-
-            string method = req["method"]?.ToString();
-
-            Dictionary<string, object> paramsObj = null;
-            if (req.TryGetValue("params", out var pVal) && pVal is Dictionary<string, object> pd)
-                paramsObj = pd;
-
-            // MCP Initialize handshake
-            if (method == "initialize")
-            {
-                return JsonHelper.SerializeJsonRpcResponseBody(id, new
-                    {
-                        protocolVersion = "2024-11-05",
-                        capabilities = new
-                        {
-                            tools = new { }
-                        },
-                        serverInfo = new
-                        {
-                            name = "unity-explorer-mcp",
-                            version = "1.0.0"
-                        }
-                    });
-            }
-
-            if (method == "notifications/initialized")
-            {
-                return "";
-            }
-
-            if (method == "tools/list")
-            {
-                var tools = _toolRegistry.GetToolDescriptions();
-                return JsonHelper.SerializeJsonRpcResponseBody(id, new { tools });
-            }
-
-            if (method == "tools/call")
-            {
-                if (paramsObj == null || !paramsObj.TryGetValue("name", out var nameVal))
-                    return JsonHelper.SerializeJsonRpcError(id, -32602, "Missing tool name");
-
-                string toolName = nameVal?.ToString();
-                var tool = _toolRegistry.GetTool(toolName);
-                if (tool == null)
-                    return JsonHelper.SerializeJsonRpcError(id, -32601, $"Unknown tool: {toolName}");
-
-                Dictionary<string, object> args = null;
-                if (paramsObj.TryGetValue("arguments", out var argsVal) && argsVal is Dictionary<string, object> ad)
-                    args = ad;
-
-                try
-                {
-                    McpContentItem contentItem;
-                    if (tool is MainThreadTool mtt)
-                    {
-                        var resultObj = Core.MainThreadDispatcher.Execute(() => (object)mtt.ExecuteOnMain(args));
-                        contentItem = (McpContentItem)resultObj;
-                    }
-                    else
-                    {
-                        var toolResult = tool.Execute(args ?? new Dictionary<string, object>());
-                        var json = toolResult is string s ? s : JsonHelper.Serialize(toolResult);
-                        contentItem = new McpContentItem { type = "text", text = json };
-                    }
-                    var list = new List<McpContentItem>();
-                    list.Add(contentItem);
-                    try
-                    {
-                        return JsonHelper.SerializeJsonRpcResponseBody(id, new { content = list, isError = false });
-                    }
-                    catch (Exception serEx)
-                    {
-                        return JsonHelper.SerializeJsonRpcResponseBody(id, new { content = new List<McpContentItem> { new McpContentItem { type = "text", text = "Serialization error: " + serEx.Message } }, isError = true });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    return JsonHelper.SerializeJsonRpcError(id, -32603, ex.Message);
-                }
-            }
-
-            if (method == "ping")
-            {
-                return JsonHelper.SerializeJsonRpcResponseBody(id, new { });
-            }
-
-            return JsonHelper.SerializeJsonRpcError(id, -32601, $"Unknown method: {method}");
+                type = "text",
+                text = text
+            };
         }
     }
 

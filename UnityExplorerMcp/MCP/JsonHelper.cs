@@ -136,15 +136,27 @@ namespace UnityExplorerMcp.MCP
         {
             if (string.IsNullOrEmpty(json)) return null;
             var parser = new JsonParser(json);
-            return parser.ParseObject();
+            return parser.ParseDocument();
         }
 
         private class JsonParser
         {
             private readonly string _json;
             private int _pos;
+            private bool _failed;
 
-            public JsonParser(string json) { _json = json; _pos = 0; }
+            public JsonParser(string json)
+            {
+                _json = json;
+                _pos = 0;
+            }
+
+            public Dictionary<string, object> ParseDocument()
+            {
+                Dictionary<string, object> result = ParseObject();
+                SkipWhitespace();
+                return !_failed && _pos == _json.Length ? result : null;
+            }
 
             private void SkipWhitespace()
             {
@@ -165,25 +177,26 @@ namespace UnityExplorerMcp.MCP
 
             public Dictionary<string, object> ParseObject()
             {
-                if (Consume() != '{') return null;
+                if (Consume() != '{') return Fail<Dictionary<string, object>>();
                 var dict = new Dictionary<string, object>();
                 if (Peek() == '}') { _pos++; return dict; }
                 while (true)
                 {
                     var key = ParseString();
-                    if (key == null) return null;
-                    if (Consume() != ':') return null;
+                    if (_failed || key == null) return null;
+                    if (Consume() != ':') return Fail<Dictionary<string, object>>();
                     dict[key] = ParseValue();
+                    if (_failed) return null;
                     var c = Consume();
                     if (c == '}') break;
-                    if (c != ',') return null;
+                    if (c != ',') return Fail<Dictionary<string, object>>();
                 }
                 return dict;
             }
 
             private string ParseString()
             {
-                if (Consume() != '"') return null;
+                if (Consume() != '"') return Fail<string>();
                 var sb = new StringBuilder();
                 while (_pos < _json.Length)
                 {
@@ -191,21 +204,44 @@ namespace UnityExplorerMcp.MCP
                     if (c == '"') return sb.ToString();
                     if (c == '\\')
                     {
-                        if (_pos >= _json.Length) return null;
+                        if (_pos >= _json.Length) return Fail<string>();
                         var esc = _json[_pos++];
                         switch (esc)
                         {
                             case '"': sb.Append('"'); break;
                             case '\\': sb.Append('\\'); break;
+                            case '/': sb.Append('/'); break;
                             case 'n': sb.Append('\n'); break;
                             case 'r': sb.Append('\r'); break;
                             case 't': sb.Append('\t'); break;
-                            default: sb.Append(esc); break;
+                            case 'b': sb.Append('\b'); break;
+                            case 'f': sb.Append('\f'); break;
+                            case 'u':
+                                if (_pos + 4 > _json.Length)
+                                    return Fail<string>();
+                                string hex = _json.Substring(_pos, 4);
+                                if (!int.TryParse(
+                                        hex,
+                                        NumberStyles.AllowHexSpecifier,
+                                        CultureInfo.InvariantCulture,
+                                        out int codePoint))
+                                {
+                                    return Fail<string>();
+                                }
+                                sb.Append((char)codePoint);
+                                _pos += 4;
+                                break;
+                            default:
+                                return Fail<string>();
                         }
                     }
-                    else sb.Append(c);
+                    else
+                    {
+                        if (c < 0x20) return Fail<string>();
+                        sb.Append(c);
+                    }
                 }
-                return null;
+                return Fail<string>();
             }
 
             private object ParseValue()
@@ -214,23 +250,24 @@ namespace UnityExplorerMcp.MCP
                 if (c == '"') return ParseString();
                 if (c == '{') return ParseObject();
                 if (c == '[') return ParseArray();
-                if (c == 't') { _pos += 4; return true; }
-                if (c == 'f') { _pos += 5; return false; }
-                if (c == 'n') { _pos += 4; return null; }
+                if (TryConsumeLiteral("true")) return true;
+                if (TryConsumeLiteral("false")) return false;
+                if (TryConsumeLiteral("null")) return null;
                 return ParseNumber();
             }
 
             private List<object> ParseArray()
             {
-                if (Consume() != '[') return null;
+                if (Consume() != '[') return Fail<List<object>>();
                 var list = new List<object>();
                 if (Peek() == ']') { _pos++; return list; }
                 while (true)
                 {
                     list.Add(ParseValue());
+                    if (_failed) return null;
                     var c = Consume();
                     if (c == ']') break;
-                    if (c != ',') return null;
+                    if (c != ',') return Fail<List<object>>();
                 }
                 return list;
             }
@@ -240,17 +277,46 @@ namespace UnityExplorerMcp.MCP
                 int start = _pos;
                 while (_pos < _json.Length && "-0123456789.eE+".IndexOf(_json[_pos]) >= 0) _pos++;
                 var numStr = _json.Substring(start, _pos - start);
+                if (numStr.Length == 0) return Fail<object>();
                 if (numStr.Contains(".") || numStr.Contains("e") || numStr.Contains("E"))
                 {
-                    if (double.TryParse(numStr, System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out double d))
+                    if (double.TryParse(
+                        numStr,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out double d))
                         return d;
-                    return numStr;
+                    return Fail<object>();
                 }
-                if (long.TryParse(numStr, System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture, out long l))
+                if (long.TryParse(
+                    numStr,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out long l))
                     return l;
-                return numStr;
+                return Fail<object>();
+            }
+
+            private bool TryConsumeLiteral(string literal)
+            {
+                SkipWhitespace();
+                if (_pos + literal.Length > _json.Length ||
+                    !string.Equals(
+                        _json.Substring(_pos, literal.Length),
+                        literal,
+                        StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                _pos += literal.Length;
+                return true;
+            }
+
+            private T Fail<T>()
+            {
+                _failed = true;
+                return default(T);
             }
         }
 
@@ -265,22 +331,22 @@ namespace UnityExplorerMcp.MCP
             return sb.ToString();
         }
 
-        public static string SerializeJsonRpcResponseBody(long id, object result)
+        public static string SerializeJsonRpcResponseBody(object id, object result)
         {
             var sb = new StringBuilder();
             sb.Append("{\"jsonrpc\":\"2.0\",\"id\":");
-            sb.Append(id);
+            sb.Append(Serialize(id));
             sb.Append(",\"result\":");
             sb.Append(Serialize(result));
             sb.Append("}");
             return sb.ToString();
         }
 
-        public static string SerializeJsonRpcResponse(long id, object resultContent)
+        public static string SerializeJsonRpcResponse(object id, object resultContent)
         {
             var sb = new StringBuilder();
             sb.Append("{\"jsonrpc\":\"2.0\",\"id\":");
-            sb.Append(id);
+            sb.Append(Serialize(id));
             sb.Append(",\"result\":{\"content\":[");
             bool first = true;
             if (resultContent is IEnumerable<McpContentItem> items)
@@ -302,15 +368,24 @@ namespace UnityExplorerMcp.MCP
             return sb.ToString();
         }
 
-        public static string SerializeJsonRpcError(long id, int code, string message)
+        public static string SerializeJsonRpcError(
+            object id,
+            int code,
+            string message,
+            object data = null)
         {
             var sb = new StringBuilder();
             sb.Append("{\"jsonrpc\":\"2.0\",\"id\":");
-            sb.Append(id);
+            sb.Append(Serialize(id));
             sb.Append(",\"error\":{\"code\":");
             sb.Append(code);
             sb.Append(",\"message\":");
             sb.Append(EscapeString(message));
+            if (data != null)
+            {
+                sb.Append(",\"data\":");
+                sb.Append(Serialize(data));
+            }
             sb.Append("}}");
             return sb.ToString();
         }

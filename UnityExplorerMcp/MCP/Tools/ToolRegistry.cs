@@ -1,6 +1,6 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using BepInEx.Logging;
 
 namespace UnityExplorerMcp.MCP.Tools
 {
@@ -21,16 +21,19 @@ namespace UnityExplorerMcp.MCP.Tools
 
         public List<Dictionary<string, object>> GetToolDescriptions()
         {
-            return _tools.Values.Select(t => new Dictionary<string, object>
-            {
-                ["name"] = t.Name,
-                ["description"] = t.Description,
-                ["inputSchema"] = t.InputSchema ?? new Dictionary<string, object>
+            return _tools.Values
+                .OrderBy(tool => tool.Name, StringComparer.Ordinal)
+                .Select(tool => new Dictionary<string, object>
                 {
-                    ["type"] = "object",
-                    ["properties"] = new Dictionary<string, object>()
-                }
-            }).ToList();
+                    ["name"] = tool.Name,
+                    ["description"] = tool.Description,
+                    ["inputSchema"] = tool.InputSchema ?? new Dictionary<string, object>
+                    {
+                        ["type"] = "object",
+                        ["properties"] = new Dictionary<string, object>()
+                    }
+                })
+                .ToList();
         }
     }
 }

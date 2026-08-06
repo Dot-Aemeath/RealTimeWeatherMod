@@ -2,7 +2,7 @@
   "mcpServers": {
     "unity-explorer": {
       "type": "remote",
-      "url": "http://localhost:8972/"
+      "url": "http://localhost:8972/mcp"
     }
   }
 }

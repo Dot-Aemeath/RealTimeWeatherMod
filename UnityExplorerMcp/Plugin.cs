@@ -32,6 +32,7 @@ namespace UnityExplorerMcp
             _mcpServer.RegisterTool(new InspectElementTool());
             _mcpServer.RegisterTool(new SearchElementsTool());
             _mcpServer.RegisterTool(new ExecuteCodeTool());
+            _mcpServer.RegisterTool(new EnvSyncDebugTool());
             _mcpServer.RegisterTool(new GetConsoleLogsTool(_consoleService));
             _mcpServer.RegisterTool(new TakeScreenshotTool());
             _mcpServer.RegisterTool(new GetMouseElementTool());
