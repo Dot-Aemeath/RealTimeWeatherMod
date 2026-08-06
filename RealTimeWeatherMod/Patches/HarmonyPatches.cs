@@ -4,7 +4,6 @@ using HarmonyLib;
 using Bulbul;
 using TMPro;
 using UnityEngine;
-using ChillWithYou.EnvSync.Utils;
 using ChillWithYou.EnvSync.Core;
 
 namespace ChillWithYou.EnvSync.Patches
@@ -24,32 +23,8 @@ namespace ChillWithYou.EnvSync.Patches
     {
         static void Postfix(EnvironmentController __instance)
         {
-            EnvRegistry.Register(__instance.EnvironmentType, __instance);
+            GameEnvironmentRuntime.Shared.Register(__instance);
             SceneryAutomationSystem.NotifyEnvironmentControllerSetup();
-        }
-    }
-
-    [HarmonyPatch(typeof(FacilityEnvironment), "Setup")]
-    internal static class FacilityEnvPatch
-    {
-        static void Postfix(FacilityEnvironment __instance)
-        {
-            try
-            {
-                FieldInfo field = typeof(FacilityEnvironment).GetField("_windowViewService", BindingFlags.Instance | BindingFlags.NonPublic);
-                if (field != null)
-                {
-                    object service = field.GetValue(__instance);
-                    if (service != null)
-                    {
-                        ChillEnvPlugin.WindowViewServiceInstance = service;
-                        ChillEnvPlugin.ChangeWeatherMethod = service.GetType().GetMethod("ChangeWeatherAndTime", BindingFlags.Instance | BindingFlags.Public);
-                        if (ChillEnvPlugin.ChangeWeatherMethod != null)
-                            ChillEnvPlugin.Log?.LogInfo("✅ 成功捕获 WindowViewService.ChangeWeatherAndTime");
-                    }
-                }
-            }
-            catch (Exception ex) { ChillEnvPlugin.Log?.LogError($"捕获 Service 失败: {ex}"); }
         }
     }
 
@@ -88,7 +63,7 @@ namespace ChillWithYou.EnvSync.Patches
                     if (timeFormat.ToString() != "AMPM") return;
 
                     // 计算时间段文本 (已修改为 C# 7.3 兼容写法)
-                    int hour = DateTime.Now.Hour;
+                    int hour = ModEnvironmentContext.Capture().Now.Hour;
                     string timeSegment = "晚上"; // 默认
 
                     if (hour >= 0 && hour < 5) timeSegment = "凌晨";
@@ -136,80 +111,8 @@ namespace ChillWithYou.EnvSync.Patches
         static void Prefix(EnvironmentController __instance)
         {
             if (IsSimulatingClick) return;
-            if (SceneryAutomationSystem.IsSystemOperation) return;
-
-            // 环境控制器仍在初始化时，不把启动阶段的调用误判为用户操作。
-            // 安静期从最后一个控制器 Setup 完成后开始，兼容加载较慢的机器。
-            if (!SceneryAutomationSystem.IsUserInteractionTrackingReady)
-            {
-                return;
-            }
-
-            EnvironmentType type = __instance.EnvironmentType;
-            if (!SceneryAutomationSystem.UserInteractedMods.Contains(type))
-            {
-                SceneryAutomationSystem.UserInteractedMods.Add(type);
-                SceneryAutomationSystem.PersistUserInteractedMods();
-                ChillEnvPlugin.Log?.LogInfo($"[用户交互] 用户接管了 {type}，停止自动托管。");
-            }
-
-            // 立即从自动托管列表中移除
-            if (SceneryAutomationSystem.IsAutoManaged(type))
-            {
-                SceneryAutomationSystem.ReleaseAutoManaged(type);
-                ChillEnvPlugin.Log?.LogDebug($"[用户交互] 已从托管列表移除 {type}");
-            }
-
-            // 特殊处理：用户关闭系统抽中的鲸鱼时,清除标志（不恢复天气）
-            if (type == EnvironmentType.Whale && SceneryAutomationSystem.IsWhaleSystemTriggered)
-            {
-                SceneryAutomationSystem.IsWhaleSystemTriggered = false;
-                ChillEnvPlugin.Log?.LogInfo("[鲸鱼彩蛋] 用户手动关闭了系统抽中的鲸鱼，标志已清除");
-            }
+            SceneryAutomationSystem.RecordUserInteraction(__instance.EnvironmentType);
         }
     }
 
-    // 监控解锁状态是否被重新锁定
-    [HarmonyPatch]
-    internal static class UnlockStatusMonitorPatch
-    {
-        // 尝试监控 _isLocked 的 Value setter
-        static System.Collections.Generic.IEnumerable<MethodBase> TargetMethods()
-        {
-            var results = new System.Collections.Generic.List<MethodBase>();
-            try
-            {
-                // 查找所有可能修改 _isLocked 的地方
-                var assembly = typeof(UnlockItemService).Assembly;
-                foreach (var type in assembly.GetTypes())
-                {
-                    if (type.Name.Contains("UnlockEnvironmentData") || type.Name.Contains("UnlockDecorationData"))
-                    {
-                        var methods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        foreach (var method in methods)
-                        {
-                            if (method.Name.Contains("Lock") || method.Name.Contains("Unlock"))
-                            {
-                                results.Add(method);
-                                ChillEnvPlugin.Log?.LogInfo($"[监控] 找到解锁相关方法: {type.Name}.{method.Name}");
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                ChillEnvPlugin.Log?.LogError($"[监控] 查找目标方法失败: {ex.Message}");
-            }
-            return results;
-        }
-
-        static void Prefix(MethodBase __originalMethod)
-        {
-            if (ChillEnvPlugin.Cfg_DebugMode.Value && ChillEnvPlugin.Initialized)
-            {
-                ChillEnvPlugin.Log?.LogWarning($"[监控] 检测到解锁状态变更调用: {__originalMethod.DeclaringType?.Name}.{__originalMethod.Name}");
-            }
-        }
-    }
 }

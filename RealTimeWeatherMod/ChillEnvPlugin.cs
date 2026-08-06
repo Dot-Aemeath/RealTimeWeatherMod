@@ -13,14 +13,12 @@ namespace ChillWithYou.EnvSync
   public class ChillEnvPlugin : BaseUnityPlugin
   {
     internal const string PluginVersion = "5.2.4";
-    internal const string BuildId = "controller-readiness-20260606";
+    internal const string BuildId = "architecture-boundary-hardening-20260804";
 
     internal static ChillEnvPlugin Instance;
     internal static ManualLogSource Log;
     internal static UnlockItemService UnlockItemServiceInstance;
 
-    internal static object WindowViewServiceInstance;
-    internal static MethodInfo ChangeWeatherMethod;
     internal static string UIWeatherString = "";
     internal static bool Initialized;
 
@@ -53,6 +51,9 @@ namespace ChillWithYou.EnvSync
     internal static ConfigEntry<int> Cfg_DebugCode;
     internal static ConfigEntry<int> Cfg_DebugTemp;
     internal static ConfigEntry<string> Cfg_DebugText;
+    internal static ConfigEntry<string> Cfg_DebugCurrentDateTime;
+    internal static ConfigEntry<string> Cfg_DebugSunriseTime;
+    internal static ConfigEntry<string> Cfg_DebugSunsetTime;
 
     // [Hidden] 上次同步日出日落的日期
     internal static ConfigEntry<string> Cfg_LastSunSyncDate;
@@ -132,6 +133,13 @@ namespace ChillWithYou.EnvSync
       Cfg_DebugCode = Config.Bind("Debug", "SimulatedCode", 1, "模拟天气代码");
       Cfg_DebugTemp = Config.Bind("Debug", "SimulatedTemp", 25, "模拟温度");
       Cfg_DebugText = Config.Bind("Debug", "SimulatedText", "DebugWeather", "模拟描述");
+      Cfg_DebugCurrentDateTime = Config.Bind(
+        "Debug",
+        "SimulatedDateTime",
+        "12:00",
+        "模拟日期时间；支持 HH:mm[:ss] 或 yyyy-MM-dd HH:mm[:ss]");
+      Cfg_DebugSunriseTime = Config.Bind("Debug", "SimulatedSunrise", "06:30", "模拟日出时间");
+      Cfg_DebugSunsetTime = Config.Bind("Debug", "SimulatedSunset", "18:30", "模拟日落时间");
 
       // [Hidden] 上次同步日出日落的日期
       Cfg_LastSunSyncDate = Config.Bind("Internal", "LastSunSyncDate", "", "上次同步日期");
@@ -235,96 +243,6 @@ namespace ChillWithYou.EnvSync
         Log?.LogError($"[调试] ❌ 发现问题: {lockedEnvCount} 个环境和 {lockedDecoCount} 个装饰品被重新锁定");
         Log?.LogError($"[调试] 可能原因: 游戏在初始化后重新加载了存档数据");
       }
-    }
-
-    internal static void CallServiceChangeWeather(EnvironmentType envType)
-    {
-        // ---------------------------------------------------------
-        // 第一阶段：寻找 EnvironmentUI 实例
-        // ---------------------------------------------------------
-        MonoBehaviour targetUI = null;
-        
-        Type uiType = AccessTools.TypeByName("Bulbul.EnvironmentUI");
-        if (uiType != null)
-        {
-            var allUIs = UnityEngine.Resources.FindObjectsOfTypeAll(uiType);
-            if (allUIs != null && allUIs.Length > 0)
-            {
-                foreach (var obj in allUIs)
-                {
-                    var mono = obj as MonoBehaviour;
-                    if (mono != null && mono.gameObject.scene.rootCount != 0)
-                    {
-                        targetUI = mono;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (targetUI == null)
-        {
-            return;
-        }
-
-        // ---------------------------------------------------------
-        // 第二阶段：调用 EnvironmentUI.OnClickButtonChangeTime
-        // 这个 public 方法会：检查锁定状态、关闭 auto（如开启）、跳过已激活的目标
-        // 最后调用内部 ChangeTime 执行实际切换
-        // ---------------------------------------------------------
-        try
-        {
-            var method = AccessTools.Method(targetUI.GetType(), "OnClickButtonChangeTime");
-
-            if (method != null)
-            {
-                var parameters = method.GetParameters();
-                if (parameters.Length > 0)
-                {
-                    Type targetEnumType = parameters[0].ParameterType;
-                    object enumValue = Enum.Parse(targetEnumType, envType.ToString());
-                    method.Invoke(targetUI, new object[] { enumValue });
-                    
-                    Log?.LogInfo($"[Service] 环境已切换: {envType}");
-                }
-            }
-            else
-            {
-                Log?.LogError("[Service] ❌ 找不到 OnClickButtonChangeTime 方法，游戏版本可能不匹配");
-            }
-        }
-        catch (Exception ex)
-        {
-            Log?.LogError($"[Service] ❌ 调用 OnClickButtonChangeTime 失败: {ex.Message}");
-        }
-    }
-
-    internal static void SimulateClickMainIcon(EnvironmentController ctrl)
-    {
-      if (ctrl == null) return;
-      try
-      {
-        Log?.LogInfo($"[SimulateClick] 准备点击: {ctrl.name} (Type: {ctrl.GetType().Name})");
-        MethodInfo clickMethod = ctrl.GetType().GetMethod("OnClickButtonMainIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        if (clickMethod != null)
-        {
-          Patches.UserInteractionPatch.IsSimulatingClick = true;
-          try
-          {
-            clickMethod.Invoke(ctrl, null);
-            Log?.LogInfo($"[SimulateClick] 点击调用完成: {ctrl.name}");
-          }
-          finally
-          {
-            Patches.UserInteractionPatch.IsSimulatingClick = false;
-          }
-        }
-        else
-        {
-          Log?.LogError($"[SimulateClick] ❌ 未找到 OnClickButtonMainIcon 方法: {ctrl.name}");
-        }
-      }
-      catch (Exception ex) { Log?.LogError($"模拟点击失败: {ex.Message}"); }
     }
 
     private static void ForceUnlockAllEnvironments(UnlockItemService svc)
