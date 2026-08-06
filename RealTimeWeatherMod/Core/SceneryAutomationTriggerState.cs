@@ -7,7 +7,6 @@ namespace ChillWithYou.EnvSync.Core
 {
     public partial class SceneryAutomationSystem
     {
-        private static readonly object _triggerStateLock = new object();
         private static string _triggerStatePath;
 
         private static string GetTriggerStatePath()
@@ -51,12 +50,16 @@ namespace ChillWithYou.EnvSync.Core
                     if (fileDate.Date != DateTime.Today)
                         continue;
 
-                    ApplyTriggerEntry(key, val);
+                    SceneryDailyTrigger trigger;
+                    if (Enum.TryParse(key, out trigger) && Enum.IsDefined(typeof(SceneryDailyTrigger), trigger))
+                    {
+                        ApplyTriggerEntry(trigger, val);
+                    }
                 }
 
                 if (fileDate.Date == DateTime.Today)
                 {
-                    _lastDailyCheck = DateTime.Today;
+                    _dailyTriggers.RestoreDate(DateTime.Today);
                     ChillEnvPlugin.Log?.LogInfo("[触发状态] 已恢复当日概率彩蛋触发状态");
                 }
             }
@@ -66,73 +69,56 @@ namespace ChillWithYou.EnvSync.Core
             }
         }
 
-        private static void ApplyTriggerEntry(string name, string val)
+        private static void ApplyTriggerEntry(SceneryDailyTrigger trigger, string val)
         {
             SceneryAutomationTriggerStateCodec.Entry entry;
             if (!SceneryAutomationTriggerStateCodec.TryParseEntry(val, out entry))
                 return;
 
-            switch (name)
+            DateTime startTime = entry.StartTime;
+            if (SceneryDailyTriggerState.HasDuration(trigger) &&
+                entry.Triggered &&
+                startTime == DateTime.MinValue)
             {
-                case "BlueButterfly":
-                    if (entry.Triggered)
-                    {
-                        _blueButterflyTriggeredToday = true;
-                        if (entry.StartTime != DateTime.MinValue)
-                            _blueButterflyStartTime = entry.StartTime;
-                        else
-                        {
-                            ChillEnvPlugin.Log?.LogWarning(
-                                "[触发状态] 蓝蝶起始时间不可用，已使用当前时间兜底");
-                            _blueButterflyStartTime = DateTime.Now;
-                        }
-                    }
-                    break;
-                case "WindBell":
-                    _windBellTriggeredToday = entry.Triggered;
-                    _windBellRollDoneToday = entry.RollDone || entry.Triggered;
-                    break;
-                case "HotSpring":
-                    _hotSpringTriggeredToday = entry.Triggered;
-                    _hotSpringRollDoneToday = entry.RollDone || entry.Triggered;
-                    break;
-                case "Space":
-                    _spaceTriggeredToday = entry.Triggered;
-                    _spaceRollDoneToday = entry.RollDone || entry.Triggered;
-                    break;
-                case "Whale":
-                    _whaleTriggeredToday = entry.Triggered;
-                    _whaleRollDoneToday = entry.RollDone || entry.Triggered;
-                    if (entry.Triggered)
-                    {
-                        IsWhaleSystemTriggered = _autoEnabledMods.Contains(Env_Whale);
-                    }
-                    break;
+                // A timed egg without a timestamp would never expire. Start its clock
+                // now so it runs its normal duration instead of lasting all day.
+                ChillEnvPlugin.Log?.LogWarning(
+                    $"[触发状态] {trigger} 起始时间不可用，已使用当前时间兜底");
+                startTime = DateTime.Now;
+            }
+
+            _dailyTriggers.Restore(trigger, entry.Triggered, entry.RollDone, startTime);
+
+            if (trigger == SceneryDailyTrigger.Whale)
+            {
+                _dailyTriggers.RestoreWhaleOverride(
+                    entry.Triggered && _ownership.IsManaged(Env_Whale));
             }
         }
 
-        internal static void PersistTriggerState()
+        private static void PersistTriggerState()
         {
             try
             {
                 var lines = new List<string>();
-                lines.Add($"date={DateTime.Today:yyyy-MM-dd}");
+                // The state normally carries its own date (set by CheckDailyReset from
+                // that pass's snapshot). Only a persist before the first automation
+                // pass needs to fall back to a fresh reading.
+                DateTime stateDate = _dailyTriggers.Date == DateTime.MinValue
+                    ? ModEnvironmentContext.Capture().Now.Date
+                    : _dailyTriggers.Date;
+                lines.Add($"date={stateDate:yyyy-MM-dd}");
 
-                lock (_triggerStateLock)
+                foreach (SceneryDailyTrigger trigger in SceneryDailyTriggerState.All)
                 {
-                    if (_blueButterflyTriggeredToday)
-                        AddTriggerLine(lines, "BlueButterfly", true, false, _blueButterflyStartTime);
-                    AddTriggerLine(lines, "WindBell", _windBellTriggeredToday, _windBellRollDoneToday);
-                    AddTriggerLine(lines, "HotSpring", _hotSpringTriggeredToday, _hotSpringRollDoneToday);
-                    AddTriggerLine(lines, "Space", _spaceTriggeredToday, _spaceRollDoneToday);
-                    AddTriggerLine(lines, "Whale", _whaleTriggeredToday, _whaleRollDoneToday);
-
-                    var path = GetTriggerStatePath();
-                    var tempPath = path + ".tmp";
-                    var backupPath = path + ".bak";
-                    File.WriteAllLines(tempPath, lines);
-                    AtomicFileWriter.Commit(tempPath, path, backupPath);
+                    AddTriggerLine(lines, trigger, _dailyTriggers.Snapshot(trigger));
                 }
+
+                var path = GetTriggerStatePath();
+                var tempPath = path + ".tmp";
+                var backupPath = path + ".bak";
+                File.WriteAllLines(tempPath, lines);
+                AtomicFileWriter.Commit(tempPath, path, backupPath);
             }
             catch (Exception ex)
             {
@@ -142,26 +128,15 @@ namespace ChillWithYou.EnvSync.Core
 
         private static void AddTriggerLine(
             List<string> lines,
-            string name,
-            bool triggered,
-            bool rollDone)
-        {
-            AddTriggerLine(lines, name, triggered, rollDone, DateTime.MinValue);
-        }
-
-        private static void AddTriggerLine(
-            List<string> lines,
-            string name,
-            bool triggered,
-            bool rollDone,
-            DateTime startTime)
+            SceneryDailyTrigger trigger,
+            SceneryTriggerSnapshot snapshot)
         {
             string value = SceneryAutomationTriggerStateCodec.FormatEntry(
-                triggered,
-                rollDone,
-                startTime);
+                snapshot.Triggered,
+                snapshot.RollDone,
+                snapshot.StartTime);
             if (value != null)
-                lines.Add(name + "=" + value);
+                lines.Add(trigger + "=" + value);
         }
     }
 }

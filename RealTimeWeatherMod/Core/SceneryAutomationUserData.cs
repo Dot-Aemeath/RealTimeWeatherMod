@@ -8,7 +8,6 @@ namespace ChillWithYou.EnvSync.Core
 {
     public partial class SceneryAutomationSystem
     {
-        private static readonly object _userDataLock = new object();
         private static string _userDataPath;
 
         private static string GetUserDataPath()
@@ -20,7 +19,7 @@ namespace ChillWithYou.EnvSync.Core
             return _userDataPath;
         }
 
-        internal static bool LoadUserInteractedMods()
+        private static bool LoadUserInteractedMods()
         {
             try
             {
@@ -29,22 +28,28 @@ namespace ChillWithYou.EnvSync.Core
 
                 var content = File.ReadAllText(path);
                 var parsed = AutoManagedStateCodec.Parse(content);
-                lock (_userDataLock)
+                bool releasedManaged = false;
+                foreach (string name in parsed)
                 {
-                    foreach (string name in parsed)
+                    if (Enum.TryParse(name, out EnvironmentType env))
                     {
-                        if (Enum.TryParse(name, out EnvironmentType env))
+                        OwnershipTransition transition =
+                            _ownership.RecordUserInteraction(env);
+                        releasedManaged |= transition.ManagedOwnershipReleased;
+                        if (env == EnvironmentType.Whale)
                         {
-                            UserInteractedMods.Add(env);
+                            _dailyTriggers.ClearWhaleOverride();
                         }
                     }
                 }
 
-                int count;
-                lock (_userDataLock)
+                if (releasedManaged)
                 {
-                    count = UserInteractedMods.Count;
+                    _ownershipDirty = true;
+                    FlushOwnershipIfDirty();
                 }
+
+                int count = _ownership.UserOwnedCount;
                 if (count > 0)
                 {
                     ChillEnvPlugin.Log?.LogInfo(
@@ -59,17 +64,14 @@ namespace ChillWithYou.EnvSync.Core
             }
         }
 
-        internal static bool PersistUserInteractedMods()
+        private static bool PersistUserInteractedMods()
         {
             try
             {
                 var names = new List<string>();
-                lock (_userDataLock)
+                foreach (EnvironmentType env in _ownership.UserOwnedSnapshot())
                 {
-                    foreach (EnvironmentType env in UserInteractedMods)
-                    {
-                        names.Add(env.ToString());
-                    }
+                    names.Add(env.ToString());
                 }
 
                 var path = GetUserDataPath();
@@ -83,6 +85,42 @@ namespace ChillWithYou.EnvSync.Core
             {
                 ChillEnvPlugin.Log?.LogWarning($"[用户数据] 写入失败: {ex}");
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// The only user-event seam exposed to Harmony. User ownership, managed
+        /// ownership, persistence and whale override state change as one operation.
+        /// </summary>
+        internal static void RecordUserInteraction(EnvironmentType environment)
+        {
+            if (IsSystemOperation || !IsUserInteractionTrackingReady)
+            {
+                return;
+            }
+
+            OwnershipTransition transition = _ownership.RecordUserInteraction(environment);
+            if (transition.UserOwnershipAdded)
+            {
+                PersistUserInteractedMods();
+                ChillEnvPlugin.Log?.LogInfo(
+                    $"[用户交互] 用户接管了 {environment}，停止自动托管。");
+            }
+
+            if (transition.ManagedOwnershipReleased)
+            {
+                _ownershipDirty = true;
+                FlushOwnershipIfDirty();
+                ChillEnvPlugin.Log?.LogDebug(
+                    $"[用户交互] 已从托管列表移除 {environment}");
+            }
+
+            if (environment == EnvironmentType.Whale &&
+                _dailyTriggers.ClearWhaleOverride())
+            {
+                PersistTriggerState();
+                ChillEnvPlugin.Log?.LogInfo(
+                    "[鲸鱼彩蛋] 用户手动关闭了系统抽中的鲸鱼，标志已清除");
             }
         }
     }

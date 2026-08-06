@@ -6,7 +6,6 @@ namespace ChillWithYou.EnvSync.Core
 {
     public partial class SceneryAutomationSystem
     {
-        private static readonly object _autoModsLock = new object();
         private static bool _ownershipDirty = false;
 
         private void RestoreManagedOwnership()
@@ -16,46 +15,53 @@ namespace ChillWithYou.EnvSync.Core
                 return;
             }
 
-            _autoEnabledMods.Clear();
+            _ownership.ClearManaged();
 
+            int skippedUserOwned = 0;
             foreach (string name in AutoManagedStateCodec.Parse(
                 ChillEnvPlugin.Cfg_AutoManagedEnvironments.Value))
             {
                 EnvironmentType environment;
-                if (Enum.TryParse(name, out environment) &&
-                    _rules.Exists(rule => rule.EnvType == environment))
+                if (!Enum.TryParse(name, out environment) ||
+                    !_rules.Exists(rule => rule.EnvType == environment))
                 {
-                    _autoEnabledMods.Add(environment);
+                    continue;
                 }
+
+                if (!_ownership.TryMarkManaged(environment) &&
+                    _ownership.IsUserOwned(environment))
+                {
+                    skippedUserOwned++;
+                }
+            }
+
+            if (skippedUserOwned > 0)
+            {
+                ChillEnvPlugin.Log?.LogInfo(
+                    $"[自动托管] {skippedUserOwned} 项已被用户接管，未恢复托管");
             }
 
             PersistManagedOwnership();
-            if (_autoEnabledMods.Count > 0)
+            if (_ownership.ManagedCount > 0)
             {
                 ChillEnvPlugin.Log?.LogInfo(
-                    $"[自动托管] 已恢复 {_autoEnabledMods.Count} 项跨会话托管状态");
+                    $"[自动托管] 已恢复 {_ownership.ManagedCount} 项跨会话托管状态");
             }
         }
 
-        internal static void MarkAutoManaged(EnvironmentType environment)
+        private static void MarkAutoManaged(EnvironmentType environment)
         {
-            lock (_autoModsLock)
+            if (_ownership.TryMarkManaged(environment))
             {
-                if (_autoEnabledMods.Add(environment))
-                {
-                    _ownershipDirty = true;
-                }
+                _ownershipDirty = true;
             }
         }
 
-        internal static void ReleaseAutoManaged(EnvironmentType environment)
+        private static void ReleaseAutoManaged(EnvironmentType environment)
         {
-            lock (_autoModsLock)
+            if (_ownership.ReleaseManaged(environment))
             {
-                if (_autoEnabledMods.Remove(environment))
-                {
-                    _ownershipDirty = true;
-                }
+                _ownershipDirty = true;
             }
         }
 
@@ -67,7 +73,7 @@ namespace ChillWithYou.EnvSync.Core
             }
 
             var names = new List<string>();
-            foreach (EnvironmentType environment in _autoEnabledMods)
+            foreach (EnvironmentType environment in _ownership.ManagedSnapshot())
             {
                 names.Add(environment.ToString());
             }
@@ -76,23 +82,15 @@ namespace ChillWithYou.EnvSync.Core
                 AutoManagedStateCodec.Serialize(names);
         }
 
-        internal static void FlushOwnershipIfDirty()
+        private static void FlushOwnershipIfDirty()
         {
             if (!_ownershipDirty)
             {
                 return;
             }
 
-            lock (_autoModsLock)
-            {
-                if (!_ownershipDirty)
-                {
-                    return;
-                }
-
-                PersistManagedOwnership();
-                _ownershipDirty = false;
-            }
+            PersistManagedOwnership();
+            _ownershipDirty = false;
         }
     }
 }
