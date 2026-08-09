@@ -421,6 +421,133 @@ namespace UnityExplorerMcp.Tests
         }
 
         [Fact]
+        public void DeeplyNestedJson_Returns400InsteadOfCrashing()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol();
+            var body = new StringBuilder();
+            body.Append("{\"a\":");
+            for (int i = 0; i < 500; i++) body.Append('[');
+            body.Append('1');
+            for (int i = 0; i < 500; i++) body.Append(']');
+            body.Append('}');
+
+            McpHttpResponse response = protocol.CreateResponse(Post(body.ToString()));
+
+            Assert.Equal(400, response.StatusCode);
+            Assert.Equal(-32700L, ErrorCode(response));
+        }
+
+        [Fact]
+        public void HugeExponentNumber_IsRejectedAsParseError()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol();
+            McpHttpRequest request = Post(
+                "{\"jsonrpc\":\"2.0\",\"id\":\"huge\",\"method\":\"server/discover\"," +
+                "\"params\":{\"a\":1e999," + CurrentMetadata + "}}");
+            AddCurrentHeaders(request, "server/discover");
+
+            McpHttpResponse response = protocol.CreateResponse(request);
+
+            Assert.Equal(400, response.StatusCode);
+            Assert.Equal(-32700L, ErrorCode(response));
+        }
+
+        [Fact]
+        public void NullId_IsAcceptedAsRequestId()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol();
+            McpHttpRequest request = Post(
+                "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"server/discover\"," +
+                "\"params\":{" + CurrentMetadata + "}}");
+            AddCurrentHeaders(request, "server/discover");
+
+            McpHttpResponse response = protocol.CreateResponse(request);
+
+            Assert.Equal(200, response.StatusCode);
+            Dictionary<string, object> envelope = Parse(response.Body);
+            Assert.True(envelope.ContainsKey("id"));
+            Assert.Null(envelope["id"]);
+        }
+
+        [Fact]
+        public void ToolErrorContentItem_IsMarkedAsErrorResult()
+        {
+            var registry = new ToolRegistry();
+            registry.Register(new FakeTool("alpha"));
+            var handler = new McpJsonRpcHandler(
+                registry,
+                (tool, arguments) => new McpContentItem
+                {
+                    type = "text",
+                    text = "boom",
+                    isError = true
+                });
+            var protocol = new StreamableHttpProtocol(8972, handler);
+
+            McpHttpResponse response = protocol.CreateResponse(
+                CurrentPost(
+                    "err-current",
+                    "tools/call",
+                    "\"name\":\"alpha\",\"arguments\":{}",
+                    "alpha"));
+
+            Assert.Equal(200, response.StatusCode);
+            var result = Assert.IsType<Dictionary<string, object>>(Parse(response.Body)["result"]);
+            Assert.True(Assert.IsType<bool>(result["isError"]));
+        }
+
+        [Fact]
+        public void MissingHostHeader_Returns400()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol();
+            McpHttpRequest request = CurrentPost("no-host", "server/discover");
+            request.Headers.Remove("Host");
+
+            Assert.Equal(400, protocol.CreateResponse(request).StatusCode);
+        }
+
+        [Fact]
+        public void WireReader_RejectsHugeContentLengthBeforeIntegerOverflow()
+        {
+            string raw =
+                "POST /mcp HTTP/1.1\r\n" +
+                "Host: localhost:8972\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Accept: application/json, text/event-stream\r\n" +
+                "MCP-Protocol-Version: 2026-07-28\r\n" +
+                "Mcp-Method: server/discover\r\n" +
+                "Content-Length: 2147483647\r\n\r\n";
+            using var stream = new MemoryStream(Encoding.ASCII.GetBytes(raw));
+
+            var error = Assert.Throws<InvalidDataException>(
+                () => McpHttpWire.ReadRequest(stream, 1024 * 1024));
+            Assert.Contains("Content-Length", error.Message);
+        }
+
+        [Fact]
+        public void WireReader_DecodesChunkedBodyAcrossManySmallReads()
+        {
+            string body = CurrentRequest("chunk-small", "server/discover");
+            string raw =
+                "POST /mcp HTTP/1.1\r\n" +
+                "Host: localhost:8972\r\n" +
+                "Content-Type: application/json\r\n" +
+                "Accept: application/json, text/event-stream\r\n" +
+                "MCP-Protocol-Version: 2026-07-28\r\n" +
+                "Mcp-Method: server/discover\r\n" +
+                "Transfer-Encoding: chunked\r\n\r\n" +
+                body.Length.ToString("X") + "\r\n" + body + "\r\n" +
+                "0\r\n\r\n";
+            using var stream = new SlowStream(Encoding.ASCII.GetBytes(raw), 3);
+
+            McpHttpRequest request = McpHttpWire.ReadRequest(stream, 1024 * 1024);
+
+            Assert.True(request.HasBodyFraming);
+            Assert.Equal(body, request.Body);
+            Assert.Equal(200, CreateProtocol().CreateResponse(request).StatusCode);
+        }
+
+        [Fact]
         public void WireWriter_EmitsEmpty202WithDefensiveHeaders()
         {
             using var stream = new MemoryStream();
@@ -521,6 +648,21 @@ namespace UnityExplorerMcp.Tests
         {
             var error = Assert.IsType<Dictionary<string, object>>(Parse(response.Body)["error"]);
             return Assert.IsType<long>(error["code"]);
+        }
+
+        private sealed class SlowStream : MemoryStream
+        {
+            private readonly int _maxChunk;
+
+            internal SlowStream(byte[] buffer, int maxChunk) : base(buffer)
+            {
+                _maxChunk = maxChunk;
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                return base.Read(buffer, offset, Math.Min(count, _maxChunk));
+            }
         }
 
         private sealed class FakeTool : IMcpTool

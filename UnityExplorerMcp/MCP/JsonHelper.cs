@@ -141,8 +141,11 @@ namespace UnityExplorerMcp.MCP
 
         private class JsonParser
         {
+            private const int MaxDepth = 128;
+
             private readonly string _json;
             private int _pos;
+            private int _depth;
             private bool _failed;
 
             public JsonParser(string json)
@@ -246,14 +249,27 @@ namespace UnityExplorerMcp.MCP
 
             private object ParseValue()
             {
-                var c = Peek();
-                if (c == '"') return ParseString();
-                if (c == '{') return ParseObject();
-                if (c == '[') return ParseArray();
-                if (TryConsumeLiteral("true")) return true;
-                if (TryConsumeLiteral("false")) return false;
-                if (TryConsumeLiteral("null")) return null;
-                return ParseNumber();
+                if (++_depth > MaxDepth)
+                {
+                    _failed = true;
+                    return null;
+                }
+
+                try
+                {
+                    var c = Peek();
+                    if (c == '"') return ParseString();
+                    if (c == '{') return ParseObject();
+                    if (c == '[') return ParseArray();
+                    if (TryConsumeLiteral("true")) return true;
+                    if (TryConsumeLiteral("false")) return false;
+                    if (TryConsumeLiteral("null")) return null;
+                    return ParseNumber();
+                }
+                finally
+                {
+                    _depth--;
+                }
             }
 
             private List<object> ParseArray()
@@ -281,11 +297,16 @@ namespace UnityExplorerMcp.MCP
                 if (numStr.Contains(".") || numStr.Contains("e") || numStr.Contains("E"))
                 {
                     if (double.TryParse(
-                        numStr,
-                        NumberStyles.Float,
-                        CultureInfo.InvariantCulture,
-                        out double d))
+                            numStr,
+                            NumberStyles.Float,
+                            CultureInfo.InvariantCulture,
+                            out double d) &&
+                        !double.IsInfinity(d) &&
+                        !double.IsNaN(d))
+                    {
                         return d;
+                    }
+
                     return Fail<object>();
                 }
                 if (long.TryParse(
@@ -397,5 +418,6 @@ namespace UnityExplorerMcp.MCP
         public string text { get; set; }
         public string data { get; set; }
         public string mimeType { get; set; }
+        public bool isError { get; set; }
     }
 }

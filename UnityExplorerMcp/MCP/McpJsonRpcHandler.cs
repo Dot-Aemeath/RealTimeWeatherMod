@@ -174,13 +174,15 @@ namespace UnityExplorerMcp.MCP
 
         internal static bool IsValidRequestId(object id)
         {
+            // null is a valid JSON-RPC request id ("id":null must be echoed).
+            if (id == null) return true;
             if (id is string) return true;
             if (id is int || id is long) return true;
             if (id is double number)
             {
                 return !double.IsNaN(number) &&
                     !double.IsInfinity(number) &&
-                    Math.Abs(number % 1d) < double.Epsilon;
+                    number % 1d == 0d;
             }
 
             return false;
@@ -247,7 +249,7 @@ namespace UnityExplorerMcp.MCP
                     throw new InvalidOperationException("Tool returned no content");
                 }
 
-                return CreateToolResult(id, contentItem, false);
+                return CreateToolResult(id, contentItem, contentItem.isError);
             }
             catch (Exception ex)
             {

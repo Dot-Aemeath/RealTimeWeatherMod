@@ -135,15 +135,28 @@ namespace UnityExplorerMcp.MCP.Tools
             }
         }
 
+        private static Type _cachedDebugControl;
+
         private static Type FindDebugControl()
         {
+            if (_cachedDebugControl != null)
+            {
+                return _cachedDebugControl;
+            }
+
             var assembly = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(candidate =>
                     string.Equals(
                         candidate.GetName().Name,
                         "RealTimeWeatherMod",
                         StringComparison.Ordinal));
-            return assembly?.GetType(DebugControlTypeName, false);
+            Type type = assembly?.GetType(DebugControlTypeName, false);
+            if (type != null)
+            {
+                _cachedDebugControl = type;
+            }
+
+            return type;
         }
 
         private static McpContentItem Invoke(
@@ -225,7 +238,7 @@ namespace UnityExplorerMcp.MCP.Tools
             if (raw is double doubleValue &&
                 doubleValue >= int.MinValue &&
                 doubleValue <= int.MaxValue &&
-                Math.Abs(doubleValue % 1d) < double.Epsilon)
+                doubleValue % 1d == 0d)
             {
                 value = (int)doubleValue;
                 return true;
@@ -239,7 +252,8 @@ namespace UnityExplorerMcp.MCP.Tools
             return new McpContentItem
             {
                 type = "text",
-                text = TextErrorJson(error)
+                text = TextErrorJson(error),
+                isError = true
             };
         }
 

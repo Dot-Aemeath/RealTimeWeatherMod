@@ -85,6 +85,13 @@ namespace UnityExplorerMcp.MCP
                 return McpHttpResponse.Text(400, "Bad Request");
             }
 
+            if (request.Headers == null || !request.Headers.ContainsKey("Host"))
+            {
+                // HTTP/1.1 requires a Host header; a missing one is a malformed
+                // request, not a policy rejection.
+                return McpHttpResponse.Text(400, "Bad Request");
+            }
+
             if (!IsAllowedHost(request.Headers) || request.Headers.ContainsKey("Origin"))
             {
                 return McpHttpResponse.Text(403, "Forbidden");
@@ -152,10 +159,19 @@ namespace UnityExplorerMcp.MCP
 
         private static string ReasonPhrase(int statusCode)
         {
-            if (statusCode == 200) return "OK";
-            if (statusCode == 400) return "Bad Request";
-            if (statusCode == 404) return "Not Found";
-            return "Error";
+            switch (statusCode)
+            {
+                case 200: return "OK";
+                case 202: return "Accepted";
+                case 400: return "Bad Request";
+                case 403: return "Forbidden";
+                case 404: return "Not Found";
+                case 405: return "Method Not Allowed";
+                case 406: return "Not Acceptable";
+                case 411: return "Length Required";
+                case 415: return "Unsupported Media Type";
+                default: return "Error";
+            }
         }
 
         private bool IsAllowedHost(Dictionary<string, string> headers)
@@ -217,145 +233,156 @@ namespace UnityExplorerMcp.MCP
             int contentLength = 0;
             bool hasContentLength = false;
             bool isChunked = false;
+            int chunkPosition = -1;
+            bool awaitingTrailerEnd = false;
+            bool chunkedComplete = false;
             byte[] decodedChunkedBody = null;
             string method = null;
             string target = null;
             var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            while (true)
+            using (var chunkOutput = new MemoryStream())
             {
-                if (totalRead >= buffer.Length)
+                while (true)
                 {
-                    if (totalRead >= maxRequestBytes)
+                    if (totalRead >= buffer.Length)
                     {
-                        throw new InvalidDataException("HTTP request exceeds size limit");
+                        if (totalRead >= maxRequestBytes)
+                        {
+                            throw new InvalidDataException("HTTP request exceeds size limit");
+                        }
+
+                        Array.Resize(
+                            ref buffer,
+                            Math.Min(buffer.Length * 2, maxRequestBytes));
                     }
 
-                    Array.Resize(
-                        ref buffer,
-                        Math.Min(buffer.Length * 2, maxRequestBytes));
-                }
-
-                int read = stream.Read(buffer, totalRead, buffer.Length - totalRead);
-                if (read <= 0)
-                {
-                    if (totalRead == 0) return null;
-                    break;
-                }
-
-                totalRead += read;
-                if (bodyStart < 0)
-                {
-                    string headerText = Encoding.ASCII.GetString(buffer, 0, totalRead);
-                    int headerEnd = headerText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
-                    if (headerEnd >= 0)
+                    int read = stream.Read(buffer, totalRead, buffer.Length - totalRead);
+                    if (read <= 0)
                     {
-                        bodyStart = headerEnd + 4;
-                        ParseHeaders(
-                            headerText.Substring(0, headerEnd),
-                            out method,
-                            out target,
-                            headers);
+                        if (totalRead == 0) return null;
+                        break;
+                    }
 
-                        if (headers.TryGetValue("Content-Length", out string lengthText))
+                    totalRead += read;
+                    if (bodyStart < 0)
+                    {
+                        string headerText = Encoding.ASCII.GetString(buffer, 0, totalRead);
+                        int headerEnd = headerText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                        if (headerEnd >= 0)
                         {
-                            hasContentLength = true;
-                            if (!int.TryParse(
-                                    lengthText,
-                                    NumberStyles.None,
-                                    CultureInfo.InvariantCulture,
-                                    out contentLength))
-                            {
-                                throw new InvalidDataException("Invalid Content-Length");
-                            }
-                        }
+                            bodyStart = headerEnd + 4;
+                            ParseHeaders(
+                                headerText.Substring(0, headerEnd),
+                                out method,
+                                out target,
+                                headers);
 
-                        if (headers.TryGetValue(
-                                "Transfer-Encoding",
-                                out string transferEncoding))
-                        {
-                            if (hasContentLength)
+                            if (headers.TryGetValue("Content-Length", out string lengthText))
                             {
-                                throw new InvalidDataException(
-                                    "Content-Length and Transfer-Encoding cannot be combined");
-                            }
-
-                            if (!string.Equals(
-                                    transferEncoding.Trim(),
-                                    "chunked",
-                                    StringComparison.OrdinalIgnoreCase))
-                            {
-                                throw new InvalidDataException(
-                                    "Unsupported Transfer-Encoding");
+                                hasContentLength = true;
+                                if (!int.TryParse(
+                                        lengthText,
+                                        NumberStyles.None,
+                                        CultureInfo.InvariantCulture,
+                                        out contentLength))
+                                {
+                                    throw new InvalidDataException("Invalid Content-Length");
+                                }
                             }
 
-                            isChunked = true;
-                        }
+                            if (headers.TryGetValue(
+                                    "Transfer-Encoding",
+                                    out string transferEncoding))
+                            {
+                                if (hasContentLength)
+                                {
+                                    throw new InvalidDataException(
+                                        "Content-Length and Transfer-Encoding cannot be combined");
+                                }
 
-                        if (contentLength < 0 ||
-                            bodyStart + contentLength > maxRequestBytes)
-                        {
-                            throw new InvalidDataException("Invalid or oversized Content-Length");
+                                if (!string.Equals(
+                                        transferEncoding.Trim(),
+                                        "chunked",
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    throw new InvalidDataException(
+                                        "Unsupported Transfer-Encoding");
+                                }
+
+                                isChunked = true;
+                                chunkPosition = bodyStart;
+                            }
+
+                            if (contentLength < 0 ||
+                                (long)bodyStart + contentLength > maxRequestBytes)
+                            {
+                                throw new InvalidDataException("Invalid or oversized Content-Length");
+                            }
                         }
                     }
-                }
 
-                if (bodyStart >= 0 && isChunked)
-                {
-                    if (TryDecodeChunkedBody(
+                    if (bodyStart >= 0 && isChunked)
+                    {
+                        TryDecodeChunkedBody(
                             buffer,
-                            bodyStart,
+                            ref chunkPosition,
+                            ref awaitingTrailerEnd,
                             totalRead,
                             maxRequestBytes - bodyStart,
-                            out decodedChunkedBody))
+                            chunkOutput,
+                            out chunkedComplete);
+                        if (chunkedComplete)
+                        {
+                            decodedChunkedBody = chunkOutput.ToArray();
+                            break;
+                        }
+                    }
+                    else if (bodyStart >= 0 && totalRead >= (long)bodyStart + contentLength)
                     {
                         break;
                     }
                 }
-                else if (bodyStart >= 0 && totalRead >= bodyStart + contentLength)
+
+                if (bodyStart < 0 || method == null)
                 {
-                    break;
-                }
-            }
-
-            if (bodyStart < 0 || method == null)
-            {
-                throw new InvalidDataException("Incomplete HTTP headers");
-            }
-
-            if (!isChunked && totalRead < bodyStart + contentLength)
-            {
-                throw new InvalidDataException("Incomplete HTTP body");
-            }
-
-            string body;
-            if (isChunked)
-            {
-                if (decodedChunkedBody == null)
-                {
-                    throw new InvalidDataException("Incomplete chunked HTTP body");
+                    throw new InvalidDataException("Incomplete HTTP headers");
                 }
 
-                body = DecodeBody(
-                    decodedChunkedBody,
-                    0,
-                    decodedChunkedBody.Length);
-            }
-            else
-            {
-                body = contentLength == 0
-                    ? string.Empty
-                    : DecodeBody(buffer, bodyStart, contentLength);
-            }
+                if (!isChunked && totalRead < (long)bodyStart + contentLength)
+                {
+                    throw new InvalidDataException("Incomplete HTTP body");
+                }
 
-            return new McpHttpRequest
-            {
-                Method = method,
-                Target = target,
-                Headers = headers,
-                Body = body,
-                HasBodyFraming = hasContentLength || isChunked
-            };
+                string body;
+                if (isChunked)
+                {
+                    if (!chunkedComplete)
+                    {
+                        throw new InvalidDataException("Incomplete chunked HTTP body");
+                    }
+
+                    body = DecodeBody(
+                        decodedChunkedBody,
+                        0,
+                        decodedChunkedBody.Length);
+                }
+                else
+                {
+                    body = contentLength == 0
+                        ? string.Empty
+                        : DecodeBody(buffer, bodyStart, contentLength);
+                }
+
+                return new McpHttpRequest
+                {
+                    Method = method,
+                    Target = target,
+                    Headers = headers,
+                    Body = body,
+                    HasBodyFraming = hasContentLength || isChunked
+                };
+            }
         }
 
         /// <summary>
@@ -376,88 +403,105 @@ namespace UnityExplorerMcp.MCP
             }
         }
 
-        private static bool TryDecodeChunkedBody(
+        /// <summary>
+        /// Incrementally decodes a chunked body. <paramref name="position"/> and
+        /// <paramref name="output"/> are caller-held across reads, so previously
+        /// decoded chunks are not re-parsed after every read. When the current
+        /// chunk's bytes are incomplete, position stays on the incomplete size
+        /// line and the next call re-parses only that line. Once the zero-size
+        /// chunk is consumed, <paramref name="awaitingTrailerEnd"/> switches the
+        /// parser into trailer mode, where the position must not be re-parsed as
+        /// a size line on the next call.
+        /// </summary>
+        private static void TryDecodeChunkedBody(
             byte[] buffer,
-            int bodyStart,
+            ref int position,
+            ref bool awaitingTrailerEnd,
             int totalRead,
             int maxBodyBytes,
-            out byte[] body)
+            MemoryStream output,
+            out bool complete)
         {
-            body = null;
-            int position = bodyStart;
-            using (var output = new MemoryStream())
+            complete = false;
+            while (true)
             {
-                while (true)
+                if (awaitingTrailerEnd)
                 {
-                    int lineEnd = FindCrlf(buffer, position, totalRead);
-                    if (lineEnd < 0) return false;
-
-                    string sizeLine = Encoding.ASCII.GetString(
-                        buffer,
-                        position,
-                        lineEnd - position);
-                    int extensionStart = sizeLine.IndexOf(';');
-                    string sizeText = extensionStart >= 0
-                        ? sizeLine.Substring(0, extensionStart).Trim()
-                        : sizeLine.Trim();
-                    if (sizeText.Length == 0 ||
-                        !int.TryParse(
-                            sizeText,
-                            NumberStyles.AllowHexSpecifier,
-                            CultureInfo.InvariantCulture,
-                            out int chunkSize) ||
-                        chunkSize < 0)
+                    // The zero-size chunk line is consumed; only an empty line
+                    // ends the message. Incomplete trailer lines keep position.
+                    int trailerEnd = FindCrlf(buffer, position, totalRead);
+                    if (trailerEnd < 0) return;
+                    if (trailerEnd == position)
                     {
-                        throw new InvalidDataException("Invalid chunk size");
+                        complete = true;
+                        return;
                     }
 
-                    position = lineEnd + 2;
-                    if (chunkSize == 0)
+                    if (Array.IndexOf(
+                            buffer,
+                            (byte)':',
+                            position,
+                            trailerEnd - position) < 0)
                     {
-                        // Consume an optional trailer section. An empty line ends
-                        // the chunked message even when no trailers were sent.
-                        while (true)
-                        {
-                            int trailerEnd = FindCrlf(buffer, position, totalRead);
-                            if (trailerEnd < 0) return false;
-                            if (trailerEnd == position)
-                            {
-                                body = output.ToArray();
-                                return true;
-                            }
-
-                            if (Array.IndexOf(
-                                    buffer,
-                                    (byte)':',
-                                    position,
-                                    trailerEnd - position) < 0)
-                            {
-                                throw new InvalidDataException("Invalid chunk trailer");
-                            }
-
-                            position = trailerEnd + 2;
-                        }
+                        throw new InvalidDataException("Invalid chunk trailer");
                     }
 
-                    if (output.Length + chunkSize > maxBodyBytes)
-                    {
-                        throw new InvalidDataException("Chunked HTTP body exceeds size limit");
-                    }
-
-                    if (totalRead - position < chunkSize + 2)
-                    {
-                        return false;
-                    }
-
-                    output.Write(buffer, position, chunkSize);
-                    position += chunkSize;
-                    if (buffer[position] != '\r' || buffer[position + 1] != '\n')
-                    {
-                        throw new InvalidDataException("Invalid chunk terminator");
-                    }
-
-                    position += 2;
+                    position = trailerEnd + 2;
+                    continue;
                 }
+
+                int lineEnd = FindCrlf(buffer, position, totalRead);
+                if (lineEnd < 0) return;
+
+                string sizeLine = Encoding.ASCII.GetString(
+                    buffer,
+                    position,
+                    lineEnd - position);
+                int extensionStart = sizeLine.IndexOf(';');
+                string sizeText = extensionStart >= 0
+                    ? sizeLine.Substring(0, extensionStart).Trim()
+                    : sizeLine.Trim();
+                if (sizeText.Length == 0 ||
+                    !int.TryParse(
+                        sizeText,
+                        NumberStyles.AllowHexSpecifier,
+                        CultureInfo.InvariantCulture,
+                        out int chunkSize) ||
+                    chunkSize < 0)
+                {
+                    throw new InvalidDataException("Invalid chunk size");
+                }
+
+                if (chunkSize == 0)
+                {
+                    position = lineEnd + 2;
+                    awaitingTrailerEnd = true;
+                    continue;
+                }
+
+                if (output.Length + chunkSize > maxBodyBytes)
+                {
+                    throw new InvalidDataException("Chunked HTTP body exceeds size limit");
+                }
+
+                // Keep position on the size line until the chunk data and its
+                // CRLF terminator are fully buffered; chunk data may itself
+                // contain CRLF and must never be mistaken for a size line.
+                int chunkDataStart = lineEnd + 2;
+                if (totalRead - chunkDataStart < chunkSize + 2)
+                {
+                    return;
+                }
+
+                position = chunkDataStart;
+                output.Write(buffer, position, chunkSize);
+                position += chunkSize;
+                if (buffer[position] != '\r' || buffer[position + 1] != '\n')
+                {
+                    throw new InvalidDataException("Invalid chunk terminator");
+                }
+
+                position += 2;
             }
         }
 
