@@ -15,7 +15,7 @@ namespace UnityExplorerMcp.Tests
             "\"io.modelcontextprotocol/clientCapabilities\":{}}";
 
         [Fact]
-        public void Discover_AdvertisesOnlyCurrentVersionAndServerMetadata()
+        public void Discover_AdvertisesSupportedVersionsAndServerMetadata()
         {
             StreamableHttpProtocol protocol = CreateProtocol();
 
@@ -29,8 +29,8 @@ namespace UnityExplorerMcp.Tests
             var result = Assert.IsType<Dictionary<string, object>>(envelope["result"]);
             Assert.Equal("complete", result["resultType"]);
             var versions = Assert.IsType<List<object>>(result["supportedVersions"]);
-            Assert.Single(versions);
-            Assert.Equal("2026-07-28", versions[0]);
+            Assert.Contains("2026-07-28", versions);
+            Assert.Contains("2025-11-25", versions);
             Assert.Equal(0L, result["ttlMs"]);
             Assert.Equal("private", result["cacheScope"]);
             var metadata = Assert.IsType<Dictionary<string, object>>(result["_meta"]);
@@ -146,25 +146,143 @@ namespace UnityExplorerMcp.Tests
         }
 
         [Fact]
-        public void InitializeMethod_IsNotPartOfCurrentProtocol()
+        public void InitializeWithoutProtocolVersion_IsRejected()
         {
             StreamableHttpProtocol protocol = CreateProtocol();
 
             McpHttpResponse response = protocol.CreateResponse(
                 CurrentPost("no-initialize", "initialize"));
 
-            Assert.Equal(404, response.StatusCode);
-            Assert.Equal(-32601L, ErrorCode(response));
+            Assert.Equal(400, response.StatusCode);
+            Assert.Equal(-32022L, ErrorCode(response));
         }
 
         [Fact]
-        public void LegacyRequestWithoutCurrentMetadata_IsRejected()
+        public void StandardRequest_MissingVersionHeader_IsRejected()
         {
             StreamableHttpProtocol protocol = CreateProtocol();
             McpHttpRequest request = Post(
-                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"," +
-                "\"params\":{\"protocolVersion\":\"2025-11-25\"," +
-                "\"capabilities\":{},\"clientInfo\":{\"name\":\"old\",\"version\":\"1\"}}}");
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"," +
+                "\"params\":{}}");
+
+            McpHttpResponse response = protocol.CreateResponse(request);
+
+            Assert.Equal(400, response.StatusCode);
+            Assert.Equal(-32020L, ErrorCode(response));
+        }
+
+        [Fact]
+        public void StandardInitialize_HandshakeSucceedsAndEchoesVersion()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol(new FakeTool("alpha"));
+
+            McpHttpResponse response = protocol.CreateResponse(
+                StandardPost(
+                    "init-sdk",
+                    "initialize",
+                    "\"protocolVersion\":\"2025-11-25\"," +
+                    "\"capabilities\":{}," +
+                    "\"clientInfo\":{\"name\":\"sdk\",\"version\":\"1.0\"}"));
+
+            Assert.Equal(200, response.StatusCode);
+            Dictionary<string, object> envelope = Parse(response.Body);
+            Assert.Equal("init-sdk", envelope["id"]);
+            var result = Assert.IsType<Dictionary<string, object>>(envelope["result"]);
+            Assert.Equal("2025-11-25", result["protocolVersion"]);
+            var capabilities = Assert.IsType<Dictionary<string, object>>(result["capabilities"]);
+            var tools = Assert.IsType<Dictionary<string, object>>(capabilities["tools"]);
+            Assert.False(Assert.IsType<bool>(tools["listChanged"]));
+            var serverInfo = Assert.IsType<Dictionary<string, object>>(result["serverInfo"]);
+            Assert.Equal("unity-explorer-mcp", serverInfo["name"]);
+            Assert.True(result.ContainsKey("instructions"));
+        }
+
+        [Fact]
+        public void StandardInitialize_UnsupportedVersion_Returns32022()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol();
+
+            McpHttpResponse response = protocol.CreateResponse(
+                StandardPost(
+                    "init-old",
+                    "initialize",
+                    "\"protocolVersion\":\"2024-01-01\"," +
+                    "\"capabilities\":{}," +
+                    "\"clientInfo\":{\"name\":\"sdk\",\"version\":\"1.0\"}"));
+
+            Assert.Equal(400, response.StatusCode);
+            Assert.Equal(-32022L, ErrorCode(response));
+            var error = Assert.IsType<Dictionary<string, object>>(Parse(response.Body)["error"]);
+            var data = Assert.IsType<Dictionary<string, object>>(error["data"]);
+            var supported = Assert.IsType<List<object>>(data["supported"]);
+            Assert.Contains("2025-11-25", supported);
+        }
+
+        [Fact]
+        public void StandardToolsList_WorksWithoutMirroredHeaders()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol(
+                new FakeTool("zeta"),
+                new FakeTool("alpha"));
+            McpHttpRequest request = Post(
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"," +
+                "\"params\":{}}");
+            AddStandardVersionHeader(request);
+
+            McpHttpResponse response = protocol.CreateResponse(request);
+
+            Assert.Equal(200, response.StatusCode);
+            Dictionary<string, object> envelope = Parse(response.Body);
+            Assert.Equal(2L, envelope["id"]);
+            var result = Assert.IsType<Dictionary<string, object>>(envelope["result"]);
+            var tools = Assert.IsType<List<object>>(result["tools"]);
+            Assert.Equal("alpha", Assert.IsType<Dictionary<string, object>>(tools[0])["name"]);
+            Assert.Equal("zeta", Assert.IsType<Dictionary<string, object>>(tools[1])["name"]);
+        }
+
+        [Fact]
+        public void StandardToolCall_WorksWithoutNameHeader()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol(new FakeTool("alpha"));
+            McpHttpRequest request = Post(
+                "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\"," +
+                "\"params\":{\"name\":\"alpha\",\"arguments\":{}}}");
+            AddStandardVersionHeader(request);
+
+            McpHttpResponse response = protocol.CreateResponse(request);
+
+            Assert.Equal(200, response.StatusCode);
+            var result = Assert.IsType<Dictionary<string, object>>(Parse(response.Body)["result"]);
+            Assert.False(Assert.IsType<bool>(result["isError"]));
+            var content = Assert.IsType<List<object>>(result["content"]);
+            Assert.Equal(
+                "alpha",
+                Assert.IsType<Dictionary<string, object>>(content[0])["text"]);
+        }
+
+        [Fact]
+        public void StandardInitializedNotification_Returns202()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol();
+            McpHttpRequest request = Post(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+            AddStandardVersionHeader(request);
+
+            McpHttpResponse response = protocol.CreateResponse(request);
+
+            Assert.Equal(202, response.StatusCode);
+            Assert.Equal(string.Empty, response.Body);
+        }
+
+        [Fact]
+        public void StandardRequest_WrongMethodHeader_IsStillRejected()
+        {
+            StreamableHttpProtocol protocol = CreateProtocol();
+            McpHttpRequest request = Post(
+                "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/list\"," +
+                "\"params\":{}}");
+            AddStandardVersionHeader(request);
+            request.Headers["Mcp-Method"] = "tools/call";
 
             McpHttpResponse response = protocol.CreateResponse(request);
 
@@ -197,11 +315,11 @@ namespace UnityExplorerMcp.Tests
         }
 
         [Fact]
-        public void Post_RejectsEveryOlderProtocolVersion()
+        public void Post_RejectsUnsupportedProtocolVersion()
         {
             StreamableHttpProtocol protocol = CreateProtocol();
             McpHttpRequest request = CurrentPost("old-version", "server/discover");
-            request.Headers["MCP-Protocol-Version"] = "2025-11-25";
+            request.Headers["MCP-Protocol-Version"] = "2024-01-01";
 
             McpHttpResponse response = protocol.CreateResponse(request);
 
@@ -209,10 +327,10 @@ namespace UnityExplorerMcp.Tests
             Assert.Equal(-32022L, ErrorCode(response));
             var error = Assert.IsType<Dictionary<string, object>>(Parse(response.Body)["error"]);
             var data = Assert.IsType<Dictionary<string, object>>(error["data"]);
-            Assert.Equal("2025-11-25", data["requested"]);
+            Assert.Equal("2024-01-01", data["requested"]);
             var supported = Assert.IsType<List<object>>(data["supported"]);
-            Assert.Single(supported);
-            Assert.Equal("2026-07-28", supported[0]);
+            Assert.Contains("2026-07-28", supported);
+            Assert.Contains("2025-11-25", supported);
         }
 
         [Fact]
@@ -614,6 +732,23 @@ namespace UnityExplorerMcp.Tests
         {
             request.Headers["MCP-Protocol-Version"] = "2026-07-28";
             request.Headers["Mcp-Method"] = method;
+        }
+
+        private static McpHttpRequest StandardPost(
+            string id,
+            string method,
+            string additionalParams = null)
+        {
+            return Post(
+                "{\"jsonrpc\":\"2.0\",\"id\":\"" + id +
+                "\",\"method\":\"" + method + "\",\"params\":{" +
+                additionalParams +
+                "}}");
+        }
+
+        private static void AddStandardVersionHeader(McpHttpRequest request)
+        {
+            request.Headers["MCP-Protocol-Version"] = "2025-11-25";
         }
 
         private static McpHttpRequest Post(string body)

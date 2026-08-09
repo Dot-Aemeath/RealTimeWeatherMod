@@ -55,13 +55,28 @@ namespace UnityExplorerMcp.MCP
     }
 
     /// <summary>
-    /// Dispatches the current, stateless MCP protocol. Version, client identity and
-    /// capabilities are carried on every request; no initialization-era state exists.
+    /// Dispatches the MCP protocol. The current (draft) protocol is stateless:
+    /// version, client identity and capabilities are carried on every request via
+    /// per-request metadata and mirrored headers. Standard protocol versions
+    /// (2025-03-26 through 2025-11-25) are served through the initialize
+    /// handshake path; version, capabilities and client identity travel in the
+    /// initialize request itself and the version is then mirrored in the
+    /// MCP-Protocol-Version header on every later request.
     /// HTTP framing and mirrored-header validation stay outside this module.
     /// </summary>
     internal sealed class McpJsonRpcHandler
     {
         internal const string CurrentProtocolVersion = "2026-07-28";
+        internal const string LegacyProtocolVersion = "2025-11-25";
+        internal const int UnsupportedProtocolVersionError = -32022;
+
+        private static readonly string[] SupportedProtocolVersions =
+        {
+            CurrentProtocolVersion,
+            "2025-11-25",
+            "2025-06-18",
+            "2025-03-26"
+        };
 
         private readonly ToolRegistry _toolRegistry;
         private readonly Func<IMcpTool, Dictionary<string, object>, McpContentItem> _executeTool;
@@ -76,6 +91,21 @@ namespace UnityExplorerMcp.MCP
 
         internal static bool IsSupportedProtocolVersion(string version)
         {
+            if (version == null) return false;
+
+            foreach (string supported in SupportedProtocolVersions)
+            {
+                if (string.Equals(version, supported, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        internal static bool IsCurrentProtocolVersion(string version)
+        {
             return string.Equals(
                 version,
                 CurrentProtocolVersion,
@@ -84,7 +114,7 @@ namespace UnityExplorerMcp.MCP
 
         internal static string[] GetSupportedProtocolVersions()
         {
-            return new[] { CurrentProtocolVersion };
+            return (string[])SupportedProtocolVersions.Clone();
         }
 
         internal McpProtocolResult Process(Dictionary<string, object> request)
@@ -140,6 +170,11 @@ namespace UnityExplorerMcp.MCP
                 return Invalid(-32600, "Invalid Request");
             }
 
+            if (method == "initialize")
+            {
+                return ProcessInitialize(id, parameters);
+            }
+
             if (method == "server/discover")
             {
                 return ProcessDiscover(id);
@@ -186,6 +221,51 @@ namespace UnityExplorerMcp.MCP
             }
 
             return false;
+        }
+
+        private static McpProtocolResult ProcessInitialize(
+            object id,
+            Dictionary<string, object> parameters)
+        {
+            string requestedVersion = GetRequestedProtocolVersion(parameters);
+            if (!IsSupportedProtocolVersion(requestedVersion))
+            {
+                return McpProtocolResult.Request(
+                    JsonHelper.SerializeJsonRpcError(
+                        id,
+                        UnsupportedProtocolVersionError,
+                        "Unsupported protocol version",
+                        new
+                        {
+                            supported = GetSupportedProtocolVersions(),
+                            requested = requestedVersion
+                        }));
+            }
+
+            return Respond(
+                id,
+                new
+                {
+                    protocolVersion = requestedVersion,
+                    capabilities = new
+                    {
+                        tools = new { listChanged = false }
+                    },
+                    serverInfo = CreateServerInfo(),
+                    instructions = CreateInstructions()
+                });
+        }
+
+        private static string GetRequestedProtocolVersion(
+            Dictionary<string, object> parameters)
+        {
+            if (parameters == null ||
+                !parameters.TryGetValue("protocolVersion", out object versionValue))
+            {
+                return null;
+            }
+
+            return versionValue as string;
         }
 
         private static McpProtocolResult ProcessDiscover(object id)

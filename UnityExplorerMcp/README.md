@@ -147,10 +147,10 @@ envsync_debug({ "action": "disable" })
 ## 协议
 
 - 端点：`http://localhost:8972/mcp`
-- 传输：标准 MCP Streamable HTTP（JSON-RPC 2.0），仅支持当前协议版本 `2026-07-28`
-- 不提供 `initialize` 或旧版协议兼容层；客户端通过逐请求 `_meta` 与 `server/discover` 工作
+- 传输：标准 MCP Streamable HTTP（JSON-RPC 2.0），同时支持两类协议形态：
+  - 当前 draft `2026-07-28`（stateless）：版本与能力由逐请求 `_meta` 与镜像头携带，能力发现用 `server/discover`；`MCP-Protocol-Version`、`Mcp-Method`、必要时的 `Mcp-Name` 与正文必须逐项一致
+  - 标准版本 `2025-03-26` 至 `2025-11-25`：走标准 `initialize` 握手（版本在握手请求正文中），握手后由 `MCP-Protocol-Version` 头携带版本，镜像头为可选——官方 MCP SDK 客户端可直接连接
 - `POST /mcp` 要求 `Content-Type: application/json`，且 `Accept` 同时声明 `application/json` 与 `text/event-stream`
-- 当前请求必须让 `MCP-Protocol-Version`、`Mcp-Method`、必要时的 `Mcp-Name` 与正文逐项一致；不一致会在工具执行前返回结构化 `400`
 - JSON-RPC 请求直接返回 `200 application/json`；可接受的 notification 返回无正文的 `202 Accepted`
 - `GET /mcp` 按当前规范返回 `405 Method Not Allowed`，不再建立旧式 endpoint-event SSE 长连接
 - 服务无会话状态且不发送 `Mcp-Session-Id`，多个客户端可并发、独立调用同一端点

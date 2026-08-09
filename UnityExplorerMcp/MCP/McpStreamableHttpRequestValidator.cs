@@ -41,7 +41,10 @@ namespace UnityExplorerMcp.MCP
     /// <summary>
     /// Validates the headers mirrored by the current Streamable HTTP binding. The
     /// JSON-RPC body remains the source of truth; mismatches are rejected before a
-    /// tool can execute.
+    /// tool can execute. Standard protocol requests (2025-03-26 through
+    /// 2025-11-25) go through the initialize handshake instead: the version lives
+    /// in the initialize body, is mirrored on later requests, and mirrored
+    /// Mcp-Method/Mcp-Name headers are optional for them.
     /// </summary>
     internal static class McpStreamableHttpRequestValidator
     {
@@ -60,61 +63,101 @@ namespace UnityExplorerMcp.MCP
             }
 
             object id = GetResponseId(message);
-            string bodyVersion = GetBodyProtocolVersion(message);
+            string method = GetMethod(message);
+            bool isInitialize = string.Equals(
+                method,
+                "initialize",
+                StringComparison.Ordinal);
             bool hasVersionHeader = headers.TryGetValue(
                 "MCP-Protocol-Version",
                 out string headerVersion);
+            bool isCurrentProtocol = hasVersionHeader &&
+                McpJsonRpcHandler.IsCurrentProtocolVersion(headerVersion);
 
-            if (!hasVersionHeader)
+            if (isInitialize)
             {
-                return HeaderError(
-                    id,
-                    "MCP-Protocol-Version header is missing");
+                // Standard handshake: the requested version travels in the body and
+                // no mirrored headers or per-request metadata are required yet.
+                string requestedVersion = GetInitializeProtocolVersion(message);
+                if (!McpJsonRpcHandler.IsSupportedProtocolVersion(requestedVersion))
+                {
+                    return McpHttpValidationResult.Error(
+                        400,
+                        JsonHelper.SerializeJsonRpcError(
+                            id,
+                            UnsupportedProtocolVersion,
+                            "Unsupported protocol version",
+                            new
+                            {
+                                supported = McpJsonRpcHandler.GetSupportedProtocolVersions(),
+                                requested = requestedVersion
+                            }));
+                }
             }
-
-            if (!McpJsonRpcHandler.IsSupportedProtocolVersion(headerVersion))
+            else
             {
-                return McpHttpValidationResult.Error(
-                    400,
-                    JsonHelper.SerializeJsonRpcError(
+                if (!hasVersionHeader)
+                {
+                    return HeaderError(
                         id,
-                        UnsupportedProtocolVersion,
-                        "Unsupported protocol version",
-                        new
-                        {
-                            supported = McpJsonRpcHandler.GetSupportedProtocolVersions(),
-                            requested = headerVersion
-                        }));
+                        "MCP-Protocol-Version header is missing");
+                }
+
+                if (!McpJsonRpcHandler.IsSupportedProtocolVersion(headerVersion))
+                {
+                    return McpHttpValidationResult.Error(
+                        400,
+                        JsonHelper.SerializeJsonRpcError(
+                            id,
+                            UnsupportedProtocolVersion,
+                            "Unsupported protocol version",
+                            new
+                            {
+                                supported = McpJsonRpcHandler.GetSupportedProtocolVersions(),
+                                requested = headerVersion
+                            }));
+                }
+
+                string bodyVersion = GetBodyProtocolVersion(message);
+                if (bodyVersion != null &&
+                    !string.Equals(bodyVersion, headerVersion, StringComparison.Ordinal))
+                {
+                    return HeaderError(
+                        id,
+                        "MCP-Protocol-Version header does not match request metadata");
+                }
+
+                if (isCurrentProtocol &&
+                    !TryGetCurrentRequestMetadata(message, out string metadataError))
+                {
+                    return Error(id, -32602, metadataError);
+                }
             }
 
-            if (!string.Equals(bodyVersion, headerVersion, StringComparison.Ordinal))
-            {
-                return HeaderError(
-                    id,
-                    "MCP-Protocol-Version header does not match request metadata");
-            }
-
-            if (!TryGetCurrentRequestMetadata(message, out string metadataError))
-            {
-                return Error(id, -32602, metadataError);
-            }
-
-            if (!message.TryGetValue("method", out object methodValue) ||
-                !(methodValue is string method) ||
-                string.IsNullOrEmpty(method))
+            if (string.IsNullOrEmpty(method))
             {
                 return Error(id, -32600, "Invalid Request");
             }
 
-            if (!headers.TryGetValue("Mcp-Method", out string methodHeader) ||
-                !string.Equals(methodHeader, method, StringComparison.Ordinal))
+            // Mirrored Mcp-Method header: mandatory for the current protocol,
+            // optional for standard protocol requests (checked when present).
+            if (headers.TryGetValue("Mcp-Method", out string methodHeader))
+            {
+                if (!string.Equals(methodHeader, method, StringComparison.Ordinal))
+                {
+                    return HeaderError(
+                        id,
+                        "Mcp-Method header does not match the request method");
+                }
+            }
+            else if (isCurrentProtocol)
             {
                 return HeaderError(
                     id,
                     "Mcp-Method header is missing or does not match the request method");
             }
 
-            if (RequiresNameHeader(method))
+            if (isCurrentProtocol && RequiresNameHeader(method))
             {
                 string bodyName = GetRequestName(message, method);
                 if (bodyName == null)
@@ -184,6 +227,29 @@ namespace UnityExplorerMcp.MCP
             }
 
             return true;
+        }
+
+        private static string GetMethod(Dictionary<string, object> message)
+        {
+            if (!message.TryGetValue("method", out object methodValue))
+            {
+                return null;
+            }
+
+            return methodValue as string;
+        }
+
+        private static string GetInitializeProtocolVersion(
+            Dictionary<string, object> message)
+        {
+            if (!message.TryGetValue("params", out object paramsValue) ||
+                !(paramsValue is Dictionary<string, object> parameters) ||
+                !parameters.TryGetValue("protocolVersion", out object versionValue))
+            {
+                return null;
+            }
+
+            return versionValue as string;
         }
 
         private static string GetBodyProtocolVersion(
