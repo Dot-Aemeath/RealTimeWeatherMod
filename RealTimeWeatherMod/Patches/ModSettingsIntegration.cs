@@ -47,12 +47,50 @@ namespace ChillWithYou.EnvSync.Patches
             // 初始等待一帧
             yield return null;
 
-            // ModSettingsManager 由 iGPU Savior / Potato 在玩家第一次打开游戏设置界面时才懒创建，
-            // 因此这里持续等待直到管理器就绪，而不是使用固定超时窗口（窗口过期会永久丢失设置项）。
-            // TryRegisterSettings 内部保证注册流程只执行一次，本循环只负责等待就绪。
-            while (!TryRegisterSettings())
+            object lastRegisteredManager = null;
+
+            // ModSettingsManager 由 iGPU Savior / Potato 管理，可能晚于本插件创建（懒加载），
+            // 因此持续轮询直到管理器就绪，而不是使用固定超时窗口（窗口过期会永久丢失设置项）。
+            // 另外：若管理器实例被场景切换销毁重建（旧版 iGPU 未做 HideAndDontSave 保护时会发生），
+            // 已注册的设置项数据会随之丢失，这里检测到实例变化后自动重新注册。
+            while (true)
             {
-                yield return new WaitForSeconds(0.5f);
+                if (!_settingsRegistered)
+                {
+                    if (TryRegisterSettings())
+                    {
+                        lastRegisteredManager = GetManagerInstance();
+                    }
+                }
+                else if (_settingsRegistered)
+                {
+                    object current = GetManagerInstance();
+                    if (current != null && current != lastRegisteredManager)
+                    {
+                        ChillEnvPlugin.Log?.LogWarning("[EnvSync] 检测到设置管理器实例变化，重新注册设置项");
+                        _settingsRegistered = false;
+                    }
+                }
+                yield return new WaitForSeconds(5f);
+            }
+        }
+
+        /// <summary>
+        /// 反射获取当前 ModSettingsManager 实例（用于检测实例是否被销毁重建）
+        /// </summary>
+        private object GetManagerInstance()
+        {
+            try
+            {
+                Type managerType = Type.GetType(MANAGER_TYPE_NAME);
+                if (managerType == null) return null;
+                var instanceProp = managerType.GetProperty("Instance",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                return instanceProp?.GetValue(null);
+            }
+            catch
+            {
+                return null;
             }
         }
 
