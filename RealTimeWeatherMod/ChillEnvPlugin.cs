@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
@@ -12,8 +12,8 @@ namespace ChillWithYou.EnvSync
   [BepInPlugin("chillwithyou.envsync", "Chill Env Sync", PluginVersion)]
   public class ChillEnvPlugin : BaseUnityPlugin
   {
-    internal const string PluginVersion = "5.2.4";
-    internal const string BuildId = "architecture-boundary-hardening-20260804";
+    internal const string PluginVersion = "5.3.0";
+    internal const string BuildId = "settings-integration-20260811";
 
     internal static ChillEnvPlugin Instance;
     internal static ManualLogSource Log;
