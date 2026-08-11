@@ -47,26 +47,13 @@ namespace ChillWithYou.EnvSync.Patches
             // 初始等待一帧
             yield return null;
 
-            float timeout = 10f; // 最大等待时间 (秒)
-            float elapsed = 0f;
-
-            while (elapsed < timeout)
+            // ModSettingsManager 由 iGPU Savior / Potato 在玩家第一次打开游戏设置界面时才懒创建，
+            // 因此这里持续等待直到管理器就绪，而不是使用固定超时窗口（窗口过期会永久丢失设置项）。
+            // TryRegisterSettings 内部保证注册流程只执行一次，本循环只负责等待就绪。
+            while (!TryRegisterSettings())
             {
-                // 尝试注册，如果成功则退出协程
-                if (TryRegisterSettings())
-                {
-                    ChillEnvPlugin.Log?.LogInfo("[EnvSync] MOD 设置已成功注册到 iGPU Savior 界面");
-                    yield break;
-                }
-
-                // 每 0.5 秒重试一次
                 yield return new WaitForSeconds(0.5f);
-                elapsed += 0.5f;
             }
-
-            // 超时未找到主框架，说明用户可能未安装 iGPU Savior
-            // 这不是错误，只是说明设置界面功能不可用
-            ChillEnvPlugin.Log?.LogInfo("[EnvSync] 未安装可选的 iGPU Savior，已跳过设置界面集成");
         }
 
         /// <summary>
@@ -94,6 +81,10 @@ namespace ChillWithYou.EnvSync.Patches
                     bool isInitialized = (bool)isInitializedProp.GetValue(managerInstance);
                     if (!isInitialized) return false;
                 }
+
+                // 管理器已就绪：先标记注册完成，保证整个注册流程只执行一次。
+                // 部分设置项失败时不重试，否则已成功的项会被重复添加，产生重复 UI 行。
+                _settingsRegistered = true;
 
                 // =========================================================
                 // 2. 注册 MOD 信息 (Register Mod Info)
@@ -295,17 +286,22 @@ namespace ChillWithYou.EnvSync.Patches
                 // =========================================================
                 // 4. 完成注册
                 // =========================================================
-                if (allSuccess)
+                if (!allSuccess)
                 {
-                    _settingsRegistered = true;
-                    return true;
+                    ChillEnvPlugin.Log?.LogWarning("[EnvSync] 部分设置项注册失败，请检查上方错误日志");
                 }
-                return false;
+                else
+                {
+                    ChillEnvPlugin.Log?.LogInfo("[EnvSync] MOD 设置已成功注册到 iGPU Savior 界面");
+                }
+                return true;
             }
             catch (Exception ex)
             {
+                // 注册过程异常：同样停止重试，避免无限刷屏或重复添加已成功的设置项
+                _settingsRegistered = true;
                 ChillEnvPlugin.Log?.LogError($"❌ [EnvSync] 注册设置时发生致命错误: {ex.Message}");
-                return false;
+                return true;
             }
         }
 
