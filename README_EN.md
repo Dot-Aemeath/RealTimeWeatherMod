@@ -204,9 +204,9 @@ WeatherProvider = OpenMeteo
 SeniverseKey =
 ## Seniverse city name (Pinyin or Chinese, e.g. beijing, 上海). Use ip for auto locate; empty means ip
 Location = beijing
-## OpenMeteo latitude, valid range [-90, 90]
+## OpenMeteo latitude, WGS84 coordinate system, valid range [-90, 90]
 Latitude = 39.9042
-## OpenMeteo longitude, valid range [-180, 180]
+## OpenMeteo longitude, WGS84 coordinate system, valid range [-180, 180]
 Longitude = 116.4074
 
 
@@ -221,6 +221,8 @@ CacheExpiryMinutes = 60
 
 - `WeatherProvider = Seniverse`: use Seniverse. `Location` is used; `SeniverseKey` may be left empty to use the built-in key. An empty `Location` falls back to `ip` auto-location rather than stopping sync.
 - `WeatherProvider = OpenMeteo`: use OpenMeteo. `Latitude` / `Longitude` are used; no API key is required.
+  - These two fields use the **WGS84** coordinate system, which is the only system the Open-Meteo API accepts. The defaults 39.9042 / 116.4074 (Beijing) are already WGS84.
+  - Coordinates copied from Chinese map services (Baidu, Amap, Tencent) are usually GCJ-02, so entering them directly introduces an offset on the order of 500 meters. Convert them to WGS84 first, or take coordinates from the Open-Meteo geocoding API: `https://geocoding-api.open-meteo.com/v1/search?name=City&count=1&format=json`.
 - If a recent [iGPUSaviorMod](https://github.com/Small-tailqwq/iGPUSaviorMod) is installed, the in-game settings page shows provider-specific fields automatically: city input for Seniverse, latitude/longitude inputs for OpenMeteo.
 
 ### Deterministic Debug Scenarios

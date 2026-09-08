@@ -2,6 +2,14 @@
 > 
 > 从 v5.2.0 起版本集中管理于 `ChillEnvPlugin.PluginVersion`，不再散落在各个文件中。
 
+### 未发布
+
+#### MOD 内容更新
+
+- **文档：OpenMeteo 经纬度注明坐标系**
+  - 配置项 `Latitude` / `Longitude` 的说明与中英文 README 均写明使用 WGS84
+  - 补充说明默认值 39.9042 / 116.4074 本身即为 WGS84，以及国内地图 GCJ-02 坐标需先转换
+
 ### v5.3.0-重构与设置修复
 
 #### MOD 内容更新
