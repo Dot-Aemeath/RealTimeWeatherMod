@@ -51,8 +51,8 @@ namespace ChillWithYou.EnvSync.Services
                 ChillEnvPlugin.Cfg_WeatherProvider?.Value ?? SeniverseWeatherProviderAdapter.ProviderName,
                 ChillEnvPlugin.Cfg_SeniverseKey?.Value ?? string.Empty,
                 ChillEnvPlugin.Cfg_Location?.Value ?? string.Empty,
-                ChillEnvPlugin.Cfg_OpenMeteoLatitude?.Value ?? 39.9042d,
-                ChillEnvPlugin.Cfg_OpenMeteoLongitude?.Value ?? 116.4074d,
+                ChillEnvPlugin.Cfg_OpenMeteoLatitude?.Value ?? 39.9075d,
+                ChillEnvPlugin.Cfg_OpenMeteoLongitude?.Value ?? 116.39723d,
                 ChillEnvPlugin.Cfg_CacheExpiryMinutes?.Value ?? 60);
         }
     }

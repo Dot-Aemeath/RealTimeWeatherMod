@@ -192,9 +192,9 @@ SeniverseKey =
 ## 心知天气城市名称（拼音或中文，如：beijing、上海，ip 表示自动定位；留空等同于 ip）
 Location = beijing
 ## OpenMeteo 纬度，WGS84 坐标系，有效范围 [-90, 90]
-Latitude = 39.9042
+Latitude = 39.9075
 ## OpenMeteo 经度，WGS84 坐标系，有效范围 [-180, 180]
-Longitude = 116.4074
+Longitude = 116.39723
 
 
 [WeatherSync]
@@ -208,8 +208,8 @@ CacheExpiryMinutes = 60
 
 - `WeatherProvider = Seniverse`：使用心知天气。`Location` 生效，`SeniverseKey` 留空时使用内置 Key。`Location` 留空则按 `ip` 自动定位，而不是停止同步。
 - `WeatherProvider = OpenMeteo`：使用 OpenMeteo。`Latitude` / `Longitude` 生效，不需要 API Key。
-  - 这两项使用 **WGS84** 坐标系（Open-Meteo 接口只接受 WGS84）。默认值 39.9042 / 116.4074 即北京，本身就是 WGS84。
-  - 国内地图（百度、高德、腾讯）给出的经纬度通常是 GCJ-02（火星坐标系），直接填入会有约 500 米量级的偏移。想精确到点，请先把坐标转成 WGS84 再填，或直接使用 Open-Meteo 地理编码接口返回的坐标：`https://geocoding-api.open-meteo.com/v1/search?name=城市名&count=1&format=json`。
+  - 这两项使用 **WGS84** 坐标系（Open-Meteo 接口只接受 WGS84）。默认值 39.9075 / 116.39723 来自 [Open-Meteo 北京地理编码结果](https://geocoding-api.open-meteo.com/v1/search?name=Beijing&count=1&format=json)。更新默认值不会覆盖已有配置。
+  - 高德、腾讯地图通常使用 GCJ-02，百度地图通常使用 BD-09；直接填入可能造成位置偏移。想精确到点，请先把坐标转成 WGS84 再填，或直接使用 Open-Meteo 地理编码接口返回的坐标：`https://geocoding-api.open-meteo.com/v1/search?name=城市名&count=1&format=json`。
 - 如果安装了新版 [iGPUSaviorMod](https://github.com/Small-tailqwq/iGPUSaviorMod)，设置页会根据天气源自动显示对应配置项：心知天气显示城市输入框，OpenMeteo 显示经纬度输入框。
 
 ### 确定性调试场景

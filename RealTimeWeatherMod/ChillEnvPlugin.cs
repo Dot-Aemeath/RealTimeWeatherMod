@@ -115,8 +115,8 @@ namespace ChillWithYou.EnvSync
         new ConfigDescription("天气数据源", new AcceptableValueList<string>("Seniverse", "OpenMeteo")));
       Cfg_SeniverseKey = Config.Bind("WeatherAPI", "SeniverseKey", "", "心知天气 API Key");
       Cfg_Location = Config.Bind("WeatherAPI", "Location", "beijing", "城市名称");
-      Cfg_OpenMeteoLatitude = Config.Bind("WeatherAPI", "Latitude", 39.9042, "Open-Meteo 纬度（WGS84 坐标系）");
-      Cfg_OpenMeteoLongitude = Config.Bind("WeatherAPI", "Longitude", 116.4074, "Open-Meteo 经度（WGS84 坐标系）");
+      Cfg_OpenMeteoLatitude = Config.Bind("WeatherAPI", "Latitude", 39.9075, "Open-Meteo 纬度（WGS84 坐标系）");
+      Cfg_OpenMeteoLongitude = Config.Bind("WeatherAPI", "Longitude", 116.39723, "Open-Meteo 经度（WGS84 坐标系）");
 
       Cfg_UnlockEnvironments = Config.Bind("Unlock", "UnlockAllEnvironments", true, "自动解锁环境");
       Cfg_UnlockDecorations = Config.Bind("Unlock", "UnlockAllDecorations", true, "自动解锁装饰道具");

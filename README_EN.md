@@ -205,9 +205,9 @@ SeniverseKey =
 ## Seniverse city name (Pinyin or Chinese, e.g. beijing, 上海). Use ip for auto locate; empty means ip
 Location = beijing
 ## OpenMeteo latitude, WGS84 coordinate system, valid range [-90, 90]
-Latitude = 39.9042
+Latitude = 39.9075
 ## OpenMeteo longitude, WGS84 coordinate system, valid range [-180, 180]
-Longitude = 116.4074
+Longitude = 116.39723
 
 
 [WeatherSync]
@@ -221,8 +221,8 @@ CacheExpiryMinutes = 60
 
 - `WeatherProvider = Seniverse`: use Seniverse. `Location` is used; `SeniverseKey` may be left empty to use the built-in key. An empty `Location` falls back to `ip` auto-location rather than stopping sync.
 - `WeatherProvider = OpenMeteo`: use OpenMeteo. `Latitude` / `Longitude` are used; no API key is required.
-  - These two fields use the **WGS84** coordinate system, which is the only system the Open-Meteo API accepts. The defaults 39.9042 / 116.4074 (Beijing) are already WGS84.
-  - Coordinates copied from Chinese map services (Baidu, Amap, Tencent) are usually GCJ-02, so entering them directly introduces an offset on the order of 500 meters. Convert them to WGS84 first, or take coordinates from the Open-Meteo geocoding API: `https://geocoding-api.open-meteo.com/v1/search?name=City&count=1&format=json`.
+  - These two fields use the **WGS84** coordinate system, which is the only system the Open-Meteo API accepts. The defaults 39.9075 / 116.39723 come from the [Open-Meteo geocoding result for Beijing](https://geocoding-api.open-meteo.com/v1/search?name=Beijing&count=1&format=json). Updated defaults do not overwrite existing configuration.
+  - Amap and Tencent maps typically use GCJ-02, while Baidu Maps typically uses BD-09; entering these coordinates directly can introduce a position offset. Convert them to WGS84 first, or take coordinates from the Open-Meteo geocoding API: `https://geocoding-api.open-meteo.com/v1/search?name=City&count=1&format=json`.
 - If a recent [iGPUSaviorMod](https://github.com/Small-tailqwq/iGPUSaviorMod) is installed, the in-game settings page shows provider-specific fields automatically: city input for Seniverse, latitude/longitude inputs for OpenMeteo.
 
 ### Deterministic Debug Scenarios
