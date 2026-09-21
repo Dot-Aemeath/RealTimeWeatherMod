@@ -63,6 +63,8 @@ namespace ChillWithYou.EnvSync.Core
             {
                 _ownershipDirty = true;
             }
+            if (environment == Env_Whale && _dailyTriggers.ClearWhaleOverride())
+                PersistTriggerState();
         }
 
         private static void PersistManagedOwnership()
