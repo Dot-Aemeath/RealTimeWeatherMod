@@ -7,8 +7,8 @@ namespace ChillWithYou.EnvSync.Core
 {
     /// <summary>
     /// Developer-facing seam for deterministic environment scenarios. It owns
-    /// validation, persistence, immediate application and runtime verification so
-    /// MCP callers only need three operations: apply, snapshot and disable.
+    /// validation, immediate application and runtime verification. Playback sessions
+    /// override inputs in memory and leave the user's saved configuration intact.
     /// </summary>
     public static class WeatherDebugControl
     {
@@ -17,6 +17,131 @@ namespace ChillWithYou.EnvSync.Core
 
         private static readonly EnvironmentType[] SceneryWeathers =
             ModEnvironmentMap.SceneryEnvironments;
+
+        internal static DebugPlayback Playback { get; private set; }
+        internal static bool IsDebugActive => Playback != null || ChillEnvPlugin.Cfg_DebugMode.Value;
+        internal static bool SmoothEnabled => Playback?.Smooth ?? ChillEnvPlugin.Cfg_EnableSmoothTransitions.Value;
+        internal static SyncPolicySnapshot BuildPolicy() => SyncPolicy.Build(
+            Playback != null || ChillEnvPlugin.Cfg_EnableTimeSync.Value,
+            Playback != null || ChillEnvPlugin.Cfg_EnableWeatherSync.Value,
+            ChillEnvPlugin.Cfg_ShowWeatherOnUI.Value);
+
+        private static TimeTransitionWindow _testWindow;
+        private static bool _testCycle;
+        private static readonly int[] _frameHistogram = new int[1001];
+        private static int _frames, _over50ms, _gcStart;
+        private static double _frameTotal, _frameMax, _measureAfter;
+
+        public static string ControlPlayback(string json)
+        {
+            if (!IsConfigurationReady()) return SerializeError("Mod 配置尚未初始化");
+            try
+            {
+                if (string.IsNullOrWhiteSpace(json)) return SerializeError("测试命令不能为空");
+                var command = new PlaybackCommand();
+                JsonUtility.FromJsonOverwrite(json, command);
+                double realtime = Time.realtimeSinceStartupAsDouble;
+                if (command.action == "test_start" || command.action == "test_cycle")
+                {
+                    bool cycle = command.action == "test_cycle";
+                    if (cycle && (command.days < 1 || command.days > 7))
+                        return SerializeError("days 必须介于 1 和 7");
+                    var rise = TimeSpan.FromHours(6.5);
+                    var set = TimeSpan.FromHours(18.5);
+                    int windowIndex;
+                    switch (command.boundary)
+                    {
+                        case "dawn": windowIndex = 0; break;
+                        case "sunset": windowIndex = 1; break;
+                        case "night": windowIndex = 2; break;
+                        default: return SerializeError("boundary 必须是 dawn、sunset 或 night");
+                    }
+                    var window = TimeTransitionSchedule.Windows(DateTime.Today, rise, set)[windowIndex];
+                    var start = cycle ? DateTime.Today : window.Start.AddSeconds(-15);
+                    var end = cycle ? start.AddDays(command.days) : window.End.AddSeconds(15);
+                    var input = new DebugScenarioInput { WeatherCode = command.weatherCode,
+                        Temperature = command.temperature, WeatherText = "TransitionTest",
+                        CurrentDateTime = start.ToString("yyyy-MM-dd HH:mm:ss"),
+                        Sunrise = "06:30", Sunset = "18:30" };
+                    if (!DebugScenario.TryCreate(input, DateTime.Now, out var scenario, out var error))
+                        return SerializeError(error);
+                    var snapshot = new EnvironmentInputSnapshot { IsDebug = true, ConfigurationValid = true,
+                        Now = scenario.Now, Sunrise = rise, Sunset = set, Weather = scenario.Weather,
+                        TimeSegment = scenario.TimeSegment };
+                    // Let the initial two-second alignment finish before advancing the test clock.
+                    var playback = new DebugPlayback(snapshot, end, command.speed,
+                        command.smoothTransitions, realtime + 3);
+                    Playback = playback;
+                    _testCycle = cycle;
+                    _testWindow = window;
+                    _frames = _over50ms = 0;
+                    _frameTotal = _frameMax = 0;
+                    _gcStart = GC.CollectionCount(0);
+                    _measureAfter = realtime + 3;
+                    Array.Clear(_frameHistogram, 0, _frameHistogram.Length);
+                    // A new run explicitly returns ownership from a prior manual test.
+                    GameEnvironmentRuntime.Shared.Transitions.Dispose();
+                }
+                else if (command.action == "test_stop")
+                {
+                    StopPlayback();
+                }
+                else
+                {
+                    if (Playback == null) return SerializeError("没有活动测试，请先 test_start");
+                    switch (command.action)
+                    {
+                        case "test_pause": Playback.SetSpeed(0, realtime); break;
+                        case "test_resume": Playback.Resume(realtime); break;
+                        case "test_speed": Playback.SetSpeed(command.speed, realtime); break;
+                        case "test_seek":
+                            if (double.IsNaN(command.progress) || command.progress < 0 || command.progress > 1)
+                                return SerializeError("progress 必须介于 0 和 1");
+                            Playback.Seek(_testCycle
+                                ? Playback.Inputs.Now.AddSeconds((Playback.End - Playback.Inputs.Now).TotalSeconds * command.progress)
+                                : _testWindow.AtProgress(command.progress), realtime);
+                            break;
+                        default: return SerializeError("未知测试操作");
+                    }
+                }
+                TriggerImmediateApplication();
+                return CaptureSnapshot();
+            }
+            catch (ArgumentException ex) { return SerializeError(ex.Message); }
+        }
+
+        internal static void TickPlayback()
+        {
+            if (Playback == null) return;
+            double realtime = Time.realtimeSinceStartupAsDouble;
+            if (realtime >= _measureAfter && Playback.Now(realtime) < Playback.End && Playback.Speed > 0)
+            {
+                double ms = Time.unscaledDeltaTime * 1000;
+                _frames++;
+                _frameTotal += ms;
+                _frameMax = Math.Max(_frameMax, ms);
+                if (ms > 50) _over50ms++;
+                _frameHistogram[Math.Min(1000, (int)Math.Ceiling(ms))]++;
+            }
+            if (!Playback.Smooth && !ChillEnvPlugin.IsInCutscene() && !SceneryAutomationSystem.IsWhaleSystemTriggered)
+            {
+                var target = ModEnvironmentMap.ToGame(EnvironmentDecision.Resolve(BuildPolicy(), ModEnvironmentContext.Capture()).Base);
+                if (GameEnvironmentRuntime.Shared.TryIsWindowActive(target, out bool active) && !active)
+                    GameEnvironmentRuntime.Shared.TryApplyBaseImmediately(target, EnvironmentApplyMode.Interactive);
+            }
+        }
+
+        private static int FrameP95()
+        {
+            int total = 0;
+            if (_frames == 0) return 0;
+            for (int i = 0; i < _frameHistogram.Length; i++)
+            {
+                total += _frameHistogram[i];
+                if (total >= _frames * .95) return i;
+            }
+            return 1000;
+        }
 
         public static string ApplyScenario(
             int weatherCode,
@@ -45,6 +170,7 @@ namespace ChillWithYou.EnvSync.Core
                 return SerializeError(error);
             }
 
+            if (!StopPlayback()) GameEnvironmentRuntime.Shared.Transitions.Dispose();
             ChillEnvPlugin.Cfg_DebugCode.Value = weatherCode;
             ChillEnvPlugin.Cfg_DebugTemp.Value = temperature;
             ChillEnvPlugin.Cfg_DebugText.Value = string.IsNullOrWhiteSpace(weatherText)
@@ -70,11 +196,22 @@ namespace ChillWithYou.EnvSync.Core
                 return SerializeError("Mod 配置尚未初始化");
             }
 
+            bool wasDebug = ChillEnvPlugin.Cfg_DebugMode.Value;
+            if (!StopPlayback() && wasDebug) GameEnvironmentRuntime.Shared.Transitions.Dispose();
             ChillEnvPlugin.Cfg_DebugMode.Value = false;
             ChillEnvPlugin.Instance.Config.Save();
             ChillEnvPlugin.Log?.LogInfo("[调试场景] 已关闭，恢复真实输入");
             TriggerImmediateApplication();
             return CaptureSnapshot();
+        }
+
+        private static bool StopPlayback()
+        {
+            if (Playback == null) return false;
+            Playback = null;
+            // Holds belong to the calendar on which they were acquired.
+            GameEnvironmentRuntime.Shared.Transitions.Dispose();
+            return true;
         }
 
         public static string CaptureSnapshot()
@@ -85,10 +222,7 @@ namespace ChillWithYou.EnvSync.Core
             }
 
             EnvironmentInputSnapshot inputs = ModEnvironmentContext.Capture();
-            SyncPolicySnapshot policy = SyncPolicy.Build(
-                ChillEnvPlugin.Cfg_EnableTimeSync.Value,
-                ChillEnvPlugin.Cfg_EnableWeatherSync.Value,
-                ChillEnvPlugin.Cfg_ShowWeatherOnUI.Value);
+            SyncPolicySnapshot policy = BuildPolicy();
             // Expected state resolves through the same module the runner applies
             // from, so this check can never validate against a stale copy of the rule.
             EnvironmentDecisionResult decision = EnvironmentDecision.Resolve(policy, inputs);
@@ -154,6 +288,27 @@ namespace ChillWithYou.EnvSync.Core
                 lastApplied = AutoEnvRunner.LastAppliedEnvironment?.ToString() ?? "none",
                 uiWeatherText = ChillEnvPlugin.UIWeatherString ?? string.Empty,
                 whaleOverrideActive = SceneryAutomationSystem.IsWhaleSystemTriggered,
+                smoothTransitionsEnabled = SmoothEnabled,
+                testActive = Playback != null,
+                testCycle = Playback != null && _testCycle,
+                testSpeed = Playback?.Speed ?? 0,
+                testComplete = Playback != null && inputs.Now >= Playback.End,
+                testWindowProgress = Playback == null ? 0 : _testCycle ? -1 : _testWindow.Progress(inputs.Now),
+                testWindowDurationSeconds = Playback == null || _testCycle ? 0 : _testWindow.DurationSeconds,
+                testTimelineProgress = Playback == null ? 0 : Math.Max(0, Math.Min(1,
+                    (inputs.Now - Playback.Inputs.Now).TotalSeconds / (Playback.End - Playback.Inputs.Now).TotalSeconds)),
+                testFrameCount = _frames,
+                testAverageFrameMs = _frames == 0 ? 0 : _frameTotal / _frames,
+                testMaxFrameMs = _frameMax,
+                testP95FrameMs = FrameP95(),
+                testFramesOver50ms = _over50ms,
+                testGen0Collections = Playback == null ? 0 : GC.CollectionCount(0) - _gcStart,
+                transitionMode = GameEnvironmentRuntime.Shared.Transitions.Mode,
+                transitionFrom = GameEnvironmentRuntime.Shared.Transitions.Current.From.ToString(),
+                transitionTo = GameEnvironmentRuntime.Shared.Transitions.Current.To.ToString(),
+                transitionProgress = GameEnvironmentRuntime.Shared.Transitions.Current.Amount,
+                transitionManualUntil = GameEnvironmentRuntime.Shared.Transitions.ManualUntil?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+                transitionUnavailableReason = GameEnvironmentRuntime.Shared.Transitions.UnavailableReason,
                 matchesExpected = inputs.ConfigurationValid &&
                     runtimeReady &&
                     actualStateReadable &&
@@ -256,6 +411,19 @@ namespace ChillWithYou.EnvSync.Core
         [Serializable]
         private sealed class DebugRuntimeSnapshot
         {
+            public bool testActive;
+            public bool testCycle;
+            public bool testComplete;
+            public double testSpeed;
+            public double testWindowProgress;
+            public double testWindowDurationSeconds;
+            public double testTimelineProgress;
+            public int testFrameCount;
+            public double testAverageFrameMs;
+            public double testMaxFrameMs;
+            public int testP95FrameMs;
+            public int testFramesOver50ms;
+            public int testGen0Collections;
             public bool success;
             public bool debugEnabled;
             public bool configurationValid;
@@ -281,6 +449,26 @@ namespace ChillWithYou.EnvSync.Core
             public string uiWeatherText;
             public bool whaleOverrideActive;
             public bool matchesExpected;
+            public bool smoothTransitionsEnabled;
+            public string transitionMode;
+            public string transitionFrom;
+            public string transitionTo;
+            public float transitionProgress;
+            public string transitionManualUntil;
+            public string transitionUnavailableReason;
+        }
+
+        [Serializable]
+        private sealed class PlaybackCommand
+        {
+            public string action = "test_start";
+            public string boundary = "sunset";
+            public int days = 2;
+            public int weatherCode = 1;
+            public int temperature = 20;
+            public double speed = 20;
+            public double progress = 0.5;
+            public bool smoothTransitions = true;
         }
 
         [Serializable]

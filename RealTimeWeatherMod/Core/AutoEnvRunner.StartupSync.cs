@@ -141,6 +141,7 @@ namespace ChillWithYou.EnvSync.Core
                 float timeout = 30f;
                 while (!_firstSyncDone && timeout > 0f)
                 {
+                    policy = BuildPolicySnapshot();
                     EnvironmentInputSnapshot decisionInputs =
                         _pendingStartupInputs ?? noWeatherInputs;
                     bool hasWeather = decisionInputs.Weather != null;

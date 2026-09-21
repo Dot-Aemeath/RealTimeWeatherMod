@@ -143,6 +143,7 @@ namespace ChillWithYou.EnvSync.Patches
                     // 参数：Key, English, Japanese, Chinese
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_ENABLE", "Weather Sync", "天気同期", "天气同步" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_TIME", "Time Sync", "時間同期", "时间同步" });
+                    regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_SMOOTH", "Smooth Time Transitions", "時間帯の滑らかな切り替え", "平滑时段切换" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_UI", "Show Weather on UI", "UIに天気を表示", "日期栏天气" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_DETAIL", "Detailed Segments", "詳細セグメント", "详细时段" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_EGG", "Seasonal Scenery", "季節の景色", "季节性景色" });
@@ -188,6 +189,15 @@ namespace ChillWithYou.EnvSync.Patches
                 {
                     allSuccess = false;
                 }
+
+                AddToggleSafe(managerInstance, managerType,
+                    hasTranslation ? "ENV_SYNC_SMOOTH" : "平滑时段切换",
+                    ChillEnvPlugin.Cfg_EnableSmoothTransitions.Value,
+                    value =>
+                    {
+                        ChillEnvPlugin.Cfg_EnableSmoothTransitions.Value = value;
+                        ChillEnvPlugin.Instance.Config.Save();
+                    });
 
                 // --- 开关示例：UI显示 ---
                 string labelUI = hasTranslation ? "ENV_SYNC_UI" : "日期栏天气";

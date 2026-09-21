@@ -52,7 +52,11 @@ namespace ChillWithYou.EnvSync.Core
 
         private GameEnvironmentRuntime()
         {
+            Transitions = new TimeTransitionController(this);
         }
+
+        internal TimeTransitionController Transitions { get; }
+        internal int AutomaticApplyDepth { get; private set; }
 
         internal int RegisteredControllerCount
         {
@@ -95,6 +99,26 @@ namespace ChillWithYou.EnvSync.Core
         }
 
         internal bool TryApplyBase(EnvironmentType target, EnvironmentApplyMode mode)
+        {
+            return TryApplyBase(target, mode, out _);
+        }
+
+        internal bool TryApplyBase(EnvironmentType target, EnvironmentApplyMode mode, out bool appliedImmediately)
+        {
+            appliedImmediately = false;
+            if (Transitions.TryAutomaticRequest(mode)) return true;
+            appliedImmediately = TryApplyBaseImmediately(target, mode);
+            return appliedImmediately;
+        }
+
+        internal bool TryApplyBaseImmediately(EnvironmentType target, EnvironmentApplyMode mode)
+        {
+            AutomaticApplyDepth++;
+            try { return InvokeBase(target, mode); }
+            finally { AutomaticApplyDepth--; }
+        }
+
+        private bool InvokeBase(EnvironmentType target, EnvironmentApplyMode mode)
         {
             MonoBehaviour environmentUi = FindEnvironmentUi();
             if (!IsUsableEnvironmentUi(environmentUi))
@@ -471,7 +495,7 @@ namespace ChillWithYou.EnvSync.Core
             return _windowViewServiceField != null && _environmentDataServiceField != null;
         }
 
-        private bool TryGetRuntimeServices(
+        internal bool TryGetRuntimeServices(
             out MonoBehaviour environmentUi,
             out object windowViewService,
             out object environmentDataService)

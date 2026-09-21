@@ -19,7 +19,8 @@ namespace UnityExplorerMcp.MCP.Tools
         public override string Description =>
             "Apply a deterministic RealTimeWeatherMod weather/time scenario, " +
             "capture expected versus actual runtime state, or disable the scenario. " +
-            "Actions: apply, snapshot, disable.";
+            "Actions: apply, snapshot, disable; test_start, test_cycle, test_pause, test_resume, test_speed, test_seek, test_stop. " +
+            "Tests run an in-memory accelerated clock and restore normal inputs on test_stop.";
 
         public override Dictionary<string, object> InputSchema =>
             new Dictionary<string, object>
@@ -30,8 +31,32 @@ namespace UnityExplorerMcp.MCP.Tools
                     ["action"] = new Dictionary<string, object>
                     {
                         ["type"] = "string",
-                        ["enum"] = new List<string> { "apply", "snapshot", "disable" },
+                        ["enum"] = new List<string> { "apply", "snapshot", "disable", "test_start", "test_cycle", "test_pause", "test_resume", "test_speed", "test_seek", "test_stop" },
                         ["description"] = "Operation to perform"
+                    },
+                    ["boundary"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "string", ["enum"] = new List<string> { "dawn", "sunset", "night" },
+                        ["description"] = "test_start boundary; default sunset. Fixed sun schedule 06:30/18:30."
+                    },
+                    ["speed"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "number", ["minimum"] = 0, ["maximum"] = 600,
+                        ["description"] = "Simulated seconds per real second; default 20. 0 pauses; 1 is real speed."
+                    },
+                    ["days"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "integer", ["minimum"] = 1, ["maximum"] = 7,
+                        ["description"] = "test_cycle duration in simulated whole days, starting at midnight; default 2. No controller resets between boundaries."
+                    },
+                    ["progress"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "number", ["minimum"] = 0, ["maximum"] = 1,
+                        ["description"] = "test_seek position within the selected transition window (dawn 60, sunset 20, night 30 minutes), or the entire timeline for test_cycle; default 0.5. Pause first to hold it."
+                    },
+                    ["smoothTransitions"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "boolean", ["description"] = "test_start only; default true. false measures discrete-switch baseline."
                     },
                     ["weatherCode"] = new Dictionary<string, object>
                     {
@@ -80,6 +105,9 @@ namespace UnityExplorerMcp.MCP.Tools
                 }
 
                 string action = GetString(args, "action");
+                if (action != null && action.StartsWith("test_", StringComparison.Ordinal))
+                    return Invoke(debugControl, "ControlPlayback", new[] { typeof(string) },
+                        new object[] { JsonHelper.Serialize(args) });
                 if (string.Equals(action, "snapshot", StringComparison.OrdinalIgnoreCase))
                 {
                     return Invoke(debugControl, "CaptureSnapshot", Type.EmptyTypes, null);

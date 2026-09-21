@@ -21,6 +21,8 @@ namespace ChillWithYou.EnvSync.Core
 
         internal static EnvironmentInputSnapshot Capture()
         {
+            if (WeatherDebugControl.Playback != null)
+                return WeatherDebugControl.Playback.Capture(UnityEngine.Time.realtimeSinceStartupAsDouble);
             DateTime systemNow = DateTime.Now;
             TimeSpan configuredSunrise = ParseConfiguredTime(
                 ChillEnvPlugin.Cfg_SunriseTime?.Value,
@@ -101,6 +103,8 @@ namespace ChillWithYou.EnvSync.Core
         /// </summary>
         internal static DateTime Now()
         {
+            if (WeatherDebugControl.Playback != null)
+                return WeatherDebugControl.Playback.Now(UnityEngine.Time.realtimeSinceStartupAsDouble);
             DateTime systemNow = DateTime.Now;
             if (ChillEnvPlugin.Cfg_DebugMode?.Value != true)
             {

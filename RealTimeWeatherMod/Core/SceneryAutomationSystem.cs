@@ -544,6 +544,10 @@ namespace ChillWithYou.EnvSync.Core
       // 剧情保护：剧情中跳过所有彩蛋自动切换
       if (ChillEnvPlugin.IsInCutscene()) return;
 
+      // Playback owns only weather/time presentation. Its accelerated calendar must
+      // not reroll or persist the user's daily events or retime ambient automation.
+      if (WeatherDebugControl.Playback != null) return;
+
       // One reading of time and weather for the whole pass. Rules must not
       // disagree about "now" just because the clock moved between them.
       EnvironmentInputSnapshot inputs = ModEnvironmentContext.Capture();

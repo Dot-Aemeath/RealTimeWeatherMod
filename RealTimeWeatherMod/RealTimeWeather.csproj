@@ -123,6 +123,11 @@
     <Compile Include="Core\AutoEnvRunner.cs" />
     <Compile Include="Core\AutoEnvRunner.StartupSync.cs" />
     <Compile Include="Core\GameEnvironmentRuntime.cs" />
+    <Compile Include="Core\TimeTransitionController.cs" />
+    <Compile Include="Core\TimeTransitionRendering.cs" />
+    <Compile Include="Core\TimeTransitionAtmosphere.cs" />
+    <Compile Include="Core\TimeTransitionFlares.cs" />
+    <Compile Include="Patches\TimeTransitionPatches.cs" />
     <Compile Include="Core\ModEnvironmentContext.cs" />
     <Compile Include="Core\ModEnvironmentMap.cs" />
     <Compile Include="Core\SceneryAutomationOwnership.cs" />

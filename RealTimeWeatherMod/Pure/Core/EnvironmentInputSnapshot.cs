@@ -19,6 +19,7 @@ namespace ChillWithYou.EnvSync.Core
         internal TimeSpan Sunset;
         internal WeatherInfo Weather;
         internal DebugTimeSegment TimeSegment;
+        internal int? PlaybackRevision;
 
         internal EnvironmentInputSnapshot WithWeather(WeatherInfo weather)
         {
@@ -31,7 +32,8 @@ namespace ChillWithYou.EnvSync.Core
                 Sunrise = Sunrise,
                 Sunset = Sunset,
                 Weather = weather,
-                TimeSegment = TimeSegment
+                TimeSegment = TimeSegment,
+                PlaybackRevision = PlaybackRevision
             };
         }
     }

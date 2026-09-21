@@ -27,6 +27,7 @@ namespace ChillWithYou.EnvSync
     internal static ConfigEntry<int> Cfg_CacheExpiryMinutes;
     internal static ConfigEntry<string> Cfg_SunriseTime;
     internal static ConfigEntry<string> Cfg_SunsetTime;
+    internal static ConfigEntry<bool> Cfg_EnableSmoothTransitions;
     internal static ConfigEntry<string> Cfg_WeatherProvider;
     internal static ConfigEntry<string> Cfg_SeniverseKey;
     internal static ConfigEntry<string> Cfg_Location;
@@ -106,6 +107,7 @@ namespace ChillWithYou.EnvSync
       Cfg_SunriseTime = Config.Bind("TimeConfig", "Sunrise", "06:30", "日出时间");
       Cfg_SunsetTime = Config.Bind("TimeConfig", "Sunset", "18:30", "日落时间");
       Cfg_EnableTimeSync = Config.Bind("TimeSync", "EnableTimeSync", true, "是否启用时间同步");
+      Cfg_EnableSmoothTransitions = Config.Bind("TimeSync", "EnableSmoothTransitions", false, "平滑时段切换：清晨渐变60分钟、傍晚渐变20分钟、完整黄昏20分钟、渐变入夜30分钟，随日出日落移动；手动及启动对齐用2秒，不改变雨雪效果");
 
       Cfg_EnableWeatherSync = Config.Bind("WeatherAPI", "EnableWeatherSync", false, "是否启用天气API同步");
       Cfg_WeatherProvider = Config.Bind(

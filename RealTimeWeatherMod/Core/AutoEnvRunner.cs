@@ -41,10 +41,7 @@ namespace ChillWithYou.EnvSync.Core
 
         private SyncPolicySnapshot BuildPolicySnapshot()
         {
-            return SyncPolicy.Build(
-                ChillEnvPlugin.Cfg_EnableTimeSync.Value,
-                ChillEnvPlugin.Cfg_EnableWeatherSync.Value,
-                ChillEnvPlugin.Cfg_ShowWeatherOnUI.Value);
+            return WeatherDebugControl.BuildPolicy();
         }
 
         private bool HasConfiguredWeatherSource()
@@ -69,7 +66,7 @@ namespace ChillWithYou.EnvSync.Core
         {
             // A debug scenario owns its simulated sun schedule. Never let a
             // background provider request overwrite or race those inputs.
-            if (ChillEnvPlugin.Cfg_DebugMode.Value)
+            if (WeatherDebugControl.IsDebugActive)
             {
                 return;
             }
@@ -167,6 +164,9 @@ namespace ChillWithYou.EnvSync.Core
 
         private void Update()
         {
+            WeatherDebugControl.TickPlayback();
+            if (WeatherDebugControl.SmoothEnabled || GameEnvironmentRuntime.Shared.Transitions.NeedsTick)
+                GameEnvironmentRuntime.Shared.Transitions.Tick(BuildPolicySnapshot(), ModEnvironmentContext.Capture());
             if (!ChillEnvPlugin.Initialized || GameEnvironmentRuntime.Shared.RegisteredControllerCount == 0)
             {
                 return;
@@ -193,13 +193,19 @@ namespace ChillWithYou.EnvSync.Core
             if (Time.time >= _nextTimeCheckTime)
             {
                 _nextTimeCheckTime = Time.time + 30f;
-                TriggerSync(false, false, false);
+                TriggerSync(false, false, false, false);
             }
 
             if (Time.time >= _nextWeatherCheckTime)
             {
                 TriggerSync(false, false, true);
             }
+        }
+
+        private void OnDestroy()
+        {
+            GameEnvironmentRuntime.Shared.Transitions.Dispose();
+            if (_instance == this) _instance = null;
         }
 
         private void ShowStatus()
@@ -273,7 +279,8 @@ namespace ChillWithYou.EnvSync.Core
         private void TriggerSync(
             bool forceNetwork,
             bool forceApply,
-            bool rescheduleWeatherCheck)
+            bool rescheduleWeatherCheck,
+            bool acquireWeather = true)
         {
             if (ChillEnvPlugin.Cfg_DebugMode.Value)
             {
@@ -298,11 +305,17 @@ namespace ChillWithYou.EnvSync.Core
             }
 
             EnsureWeatherSyncModule();
+            if (rescheduleWeatherCheck)
+            {
+                // Reserve the next poll before yielding to the network.
+                _nextWeatherCheckTime = Time.time + GetConfiguredWeatherRefreshSeconds();
+            }
             WeatherSyncRequest request = CreateSyncRequest(
                 BuildPolicySnapshot(),
                 forceNetwork,
                 forceApply,
-                rescheduleWeatherCheck);
+                rescheduleWeatherCheck,
+                acquireWeather: acquireWeather);
             StartCoroutine(_weatherSync.Synchronize(request, null));
         }
 
@@ -312,7 +325,8 @@ namespace ChillWithYou.EnvSync.Core
             bool forceApply,
             bool rescheduleWeatherCheck,
             EnvironmentInputSnapshot inputs = null,
-            WeatherSyncMode mode = WeatherSyncMode.Regular)
+            WeatherSyncMode mode = WeatherSyncMode.Regular,
+            bool acquireWeather = true)
         {
             return new WeatherSyncRequest(
                 policy,
@@ -322,7 +336,8 @@ namespace ChillWithYou.EnvSync.Core
                 forceApply,
                 rescheduleWeatherCheck,
                 GetConfiguredWeatherRefreshSeconds(),
-                mode);
+                mode,
+                acquireWeather);
         }
 
         private void EnsureWeatherSyncModule()
@@ -383,9 +398,11 @@ namespace ChillWithYou.EnvSync.Core
             {
                 if (GameEnvironmentRuntime.Shared.TryApplyBase(
                     target,
-                    EnvironmentApplyMode.Interactive))
+                    EnvironmentApplyMode.Interactive,
+                    out bool appliedImmediately))
                 {
-                    ChillEnvPlugin.Log?.LogInfo($"[环境] 切换至: {target}");
+                    if (appliedImmediately)
+                        ChillEnvPlugin.Log?.LogInfo($"[环境] 切换至: {target}");
                 }
                 else
                 {
@@ -429,7 +446,8 @@ namespace ChillWithYou.EnvSync.Core
             if (policy.CanControlTime)
             {
                 ApplyBaseEnvironment(finalEnv, force);
-                _lastAppliedEnv = finalEnv;
+                _lastAppliedEnv = WeatherDebugControl.SmoothEnabled
+                    ? GetCurrentBaseEnvironment() ?? finalEnv : finalEnv;
             }
 
             if (!policy.CanControlWeather || inputs.Weather == null)
@@ -463,7 +481,18 @@ namespace ChillWithYou.EnvSync.Core
                 EnvironmentInputSnapshot inputs,
                 bool force)
             {
-                _runner.ApplyByPolicy(policy, inputs, force);
+                // The player can enter a cutscene or disable sync while HTTP is pending.
+                if (ChillEnvPlugin.IsInCutscene() ||
+                    inputs.IsDebug != WeatherDebugControl.IsDebugActive)
+                {
+                    return;
+                }
+
+                SyncPolicySnapshot current = _runner.BuildPolicySnapshot();
+                _runner.ApplyByPolicy(SyncPolicy.Build(
+                    policy.CanControlTime && current.CanControlTime,
+                    policy.CanControlWeather && current.CanControlWeather,
+                    policy.NeedWeatherDataForUI && current.NeedWeatherDataForUI), inputs, force);
             }
 
             public void RefreshSunSchedule()
