@@ -14,7 +14,7 @@ namespace ChillWithYou.EnvSync.Core
         private static ModEnvironment? _scheduledRain;
         private static float _closeAt;
         private static float _nextObservationAt;
-        private static bool _closeActionQueued;
+        private static float _nextCloseRequestAt;
 
         internal static void Register(WindowController controller)
         {
@@ -54,7 +54,7 @@ namespace ChillWithYou.EnvSync.Core
                 ScheduleClose(rain.Value, now);
             }
 
-            if (_closeActionQueued || now < _closeAt || ChillEnvPlugin.IsInCutscene())
+            if (now < _nextCloseRequestAt || now < _closeAt || ChillEnvPlugin.IsInCutscene())
             {
                 return;
             }
@@ -67,7 +67,9 @@ namespace ChillWithYou.EnvSync.Core
                 return;
             }
 
-            _closeActionQueued = true;
+            // A selection may be discarded or replaced by the game's action queue.
+            // Retry only after the AI is idle again, with a bounded request cadence.
+            _nextCloseRequestAt = now + 5f;
             heroine.ChangeCurrentMatcheAction(true);
         }
 
@@ -78,7 +80,9 @@ namespace ChillWithYou.EnvSync.Core
 
         internal static bool TrySelectCloseAction(ref HeroineAI.ActionStateType action)
         {
-            if (!IsEnabled() || _windowController == null || !IsWindowOpen())
+            if (action != HeroineAI.ActionStateType.None ||
+                !IsEnabled() || _windowController == null || !IsWindowOpen() ||
+                ChillEnvPlugin.IsInCutscene())
             {
                 return false;
             }
@@ -90,7 +94,6 @@ namespace ChillWithYou.EnvSync.Core
             }
 
             action = HeroineAI.ActionStateType.WildCloseWindow;
-            _closeActionQueued = true;
             return true;
         }
 
@@ -120,19 +123,7 @@ namespace ChillWithYou.EnvSync.Core
 
         private static ModEnvironment? CurrentRain()
         {
-            Models.WeatherInfo weather = ModEnvironmentContext.Capture().Weather;
-            ModEnvironment? scenery = weather == null
-                ? (ModEnvironment?)null
-                : EnvironmentDecision.ResolveSceneryCode(weather.Code);
-
-            if (scenery == ModEnvironment.LightRain ||
-                scenery == ModEnvironment.HeavyRain ||
-                scenery == ModEnvironment.ThunderRain)
-            {
-                return scenery;
-            }
-
-            return null;
+            return GameEnvironmentRuntime.Shared.GetActiveRain();
         }
 
         private static bool IsWindowOpen()
@@ -164,7 +155,7 @@ namespace ChillWithYou.EnvSync.Core
             float delay = Random.Range(minSeconds, maxSeconds);
             _scheduledRain = rain;
             _closeAt = now + delay;
-            _closeActionQueued = false;
+            _nextCloseRequestAt = 0f;
             ChillEnvPlugin.Log?.LogInfo(
                 $"[雨天关窗] {Describe(rain)}，将在 {delay:F1} 秒后请求角色关窗");
         }
@@ -210,7 +201,7 @@ namespace ChillWithYou.EnvSync.Core
         {
             _scheduledRain = null;
             _closeAt = 0f;
-            _closeActionQueued = false;
+            _nextCloseRequestAt = 0f;
         }
     }
 }

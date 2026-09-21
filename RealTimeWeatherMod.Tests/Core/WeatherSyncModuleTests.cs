@@ -213,8 +213,14 @@ namespace RealTimeWeatherMod.Tests.Core
             Assert.True(first.MoveNext());
             var firstRun = Assert.IsAssignableFrom<IEnumerator>(first.Current);
 
+            WeatherSyncResult tickResult = null;
             Run(module.Synchronize(
-                Request(Policy(true, true, true), inputWeather: Weather(1), acquireWeather: false), null));
+                Request(Policy(true, true, true), inputWeather: Weather(1), acquireWeather: false),
+                value => tickResult = value));
+            Assert.NotNull(tickResult);
+            Assert.Equal(1, tickResult.Weather.Code);
+            Assert.Equal(0, effects.EnvironmentApplies);
+            Assert.Equal(0, effects.UiUpdates);
             Run(firstRun);
             Run(first);
 

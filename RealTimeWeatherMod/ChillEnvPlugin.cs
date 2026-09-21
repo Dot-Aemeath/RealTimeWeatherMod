@@ -12,7 +12,7 @@ namespace ChillWithYou.EnvSync
   [BepInPlugin("chillwithyou.envsync", "Chill Env Sync", PluginVersion)]
   public class ChillEnvPlugin : BaseUnityPlugin
   {
-    internal const string PluginVersion = "5.3.0";
+    internal const string PluginVersion = "5.3.1";
     internal const string BuildId = "settings-integration-20260811";
 
     internal static ChillEnvPlugin Instance;
@@ -135,7 +135,7 @@ namespace ChillWithYou.EnvSync
         "Automation",
         "CloseWindowWhenRaining",
         true,
-        "下雨时阻止角色自动开窗；窗户已打开时，小雨30–90秒、雨3–8秒、雷雨1–4秒后由角色自动关窗");
+        "跟随游戏内实际雨景，阻止角色自动开窗；已开窗时，小雨30–90秒、雨3–8秒、雷雨1–4秒后请求关窗，等待现有动作完成");
 
       Cfg_DebugMode = Config.Bind("Debug", "EnableDebugMode", false, "调试模式");
       Cfg_DebugCode = Config.Bind("Debug", "SimulatedCode", 1, "模拟天气代码");

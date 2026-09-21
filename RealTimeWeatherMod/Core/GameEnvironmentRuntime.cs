@@ -182,6 +182,17 @@ namespace ChillWithYou.EnvSync.Core
             return TrySimulateMainIconClick(environmentType);
         }
 
+        internal ModEnvironment? GetActiveRain()
+        {
+            if (TryIsWindowActive(EnvironmentType.ThunderRain, out var thunder) && thunder)
+                return ModEnvironment.ThunderRain;
+            if (TryIsWindowActive(EnvironmentType.HeavyRain, out var heavy) && heavy)
+                return ModEnvironment.HeavyRain;
+            if (TryIsWindowActive(EnvironmentType.LightRain, out var light) && light)
+                return ModEnvironment.LightRain;
+            return null;
+        }
+
         internal bool TryIsWindowActive(EnvironmentType environmentType, out bool isActive)
         {
             isActive = false;

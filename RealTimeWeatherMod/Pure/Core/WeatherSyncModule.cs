@@ -139,10 +139,12 @@ namespace ChillWithYou.EnvSync.Core
             if (request == null) throw new ArgumentNullException(nameof(request));
             if (_running)
             {
-                // The active sync supersedes a cache-only tick's captured inputs.
+                // The active sync owns effects; a cache-only caller can still
+                // receive its snapshot result without reapplying stale inputs.
                 if (!request.AcquireWeather)
                 {
-                    onComplete?.Invoke(null);
+                    if (onComplete != null)
+                        yield return SynchronizeOnce(request, onComplete);
                     yield break;
                 }
                 QueuePending(request, onComplete);

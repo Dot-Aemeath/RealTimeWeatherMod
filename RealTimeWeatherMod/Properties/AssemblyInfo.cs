@@ -36,5 +36,5 @@ using System.Runtime.InteropServices;
 //
 // 发布新版本时请同步更新 PluginVersion（ChillEnvPlugin.cs）
 // 主版本.次版本.生成号.修订号
-[assembly: AssemblyVersion("5.3.0.0")]
-[assembly: AssemblyFileVersion("5.3.0.0")]
+[assembly: AssemblyVersion("5.3.1.0")]
+[assembly: AssemblyFileVersion("5.3.1.0")]

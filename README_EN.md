@@ -149,7 +149,7 @@ After first run, config is generated at `BepInEx/config/chillwithyou.envsync.cfg
 EnableSeasonalEasterEggs = true
 ## Enable automatic ambient sound management
 EnableAmbientSounds = false
-## Prevent automatic opening in rain; close after 30–90s in light rain, 3–8s in rain, or 1–4s in thunderstorms
+## Follow active in-game rain; block opening and request closing after 30–90s in light rain, 3–8s in rain, or 1–4s in thunderstorms, allowing existing actions to finish
 CloseWindowWhenRaining = true
 
 

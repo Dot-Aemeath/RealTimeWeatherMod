@@ -136,7 +136,7 @@
 EnableSeasonalEasterEggs = true
 ## 启用环境音效自动托管
 EnableAmbientSounds = false
-## 下雨时阻止角色自动开窗；已开窗时，小雨 30–90 秒、雨 3–8 秒、雷雨 1–4 秒后自动关窗
+## 跟随游戏内实际雨景，阻止角色自动开窗；已开窗时，小雨 30–90 秒、雨 3–8 秒、雷雨 1–4 秒后请求关窗，等待现有动作完成
 CloseWindowWhenRaining = true
 
 
