@@ -19,8 +19,9 @@ namespace ChillWithYou.EnvSync.Services
                 int nowIndex = json.IndexOf("\"now\"", StringComparison.Ordinal);
                 if (nowIndex < 0) return null;
 
-                int code = ExtractIntValue(json, "\"code\":\"", "\"");
-                int temperature = ExtractIntValue(json, "\"temperature\":\"", "\"");
+                if (!int.TryParse(ExtractStringValue(json, "\"code\":\"", "\""), out int code) ||
+                    !int.TryParse(ExtractStringValue(json, "\"temperature\":\"", "\""), out int temperature))
+                    return null;
                 string text = ExtractStringValue(json, "\"text\":\"", "\"");
                 if (string.IsNullOrEmpty(text)) return null;
 
@@ -44,8 +45,14 @@ namespace ChillWithYou.EnvSync.Services
             string current = ExtractObjectProperty(json, "\"current\"");
             if (string.IsNullOrEmpty(current)) return null;
 
-            int weatherCode = ExtractIntNumberValue(current, "\"weather_code\"");
-            double temperature = ExtractDoubleValue(current, "\"temperature_2m\"");
+            if (!TryExtractDoubleValue(current, "\"weather_code\"", out double code) ||
+                code != Math.Truncate(code) || code < int.MinValue || code > int.MaxValue ||
+                !TryExtractDoubleValue(current, "\"temperature_2m\"", out double temperature) ||
+                Math.Round(temperature) < int.MinValue || Math.Round(temperature) > int.MaxValue)
+            {
+                return null;
+            }
+            int weatherCode = (int)code;
             double precipitation = ExtractDoubleValue(current, "\"precipitation\"");
             double rain = ExtractDoubleValue(current, "\"rain\"");
             double showers = ExtractDoubleValue(current, "\"showers\"");
@@ -80,9 +87,9 @@ namespace ChillWithYou.EnvSync.Services
         internal static SunData ParseOpenMeteoSunSchedule(string json)
         {
             string sunrise = NormalizeOpenMeteoTime(
-                ExtractFirstArrayString(json, "\"sunrise\":["));
+                ExtractFirstArrayString(json, "\"sunrise\""));
             string sunset = NormalizeOpenMeteoTime(
-                ExtractFirstArrayString(json, "\"sunset\":["));
+                ExtractFirstArrayString(json, "\"sunset\""));
             return string.IsNullOrEmpty(sunrise) || string.IsNullOrEmpty(sunset)
                 ? null
                 : new SunData { sunrise = sunrise, sunset = sunset };
@@ -93,27 +100,21 @@ namespace ChillWithYou.EnvSync.Services
             if (string.IsNullOrEmpty(value)) return null;
             int timeStart = value.IndexOf('T');
             string time = timeStart >= 0 ? value.Substring(timeStart + 1) : value;
-            return time.Length >= 5 ? time.Substring(0, 5) : time;
-        }
-
-        private static int ExtractIntValue(string json, string prefix, string suffix)
-        {
-            int start = json.IndexOf(prefix, StringComparison.Ordinal);
-            if (start < 0) return 0;
-            start += prefix.Length;
-            int end = json.IndexOf(suffix, start, StringComparison.Ordinal);
-            if (end < 0) return 0;
-            int result;
-            return int.TryParse(json.Substring(start, end - start), out result) ? result : 0;
-        }
-
-        private static int ExtractIntNumberValue(string json, string propertyName)
-        {
-            return (int)Math.Round(ExtractDoubleValue(json, propertyName));
+            if (time.Length < 5) return null;
+            string clock = time.Substring(0, 5);
+            return TimeSpan.TryParseExact(clock, @"hh\:mm", CultureInfo.InvariantCulture, out _)
+                ? clock
+                : null;
         }
 
         private static double ExtractDoubleValue(string json, string propertyName)
         {
+            return TryExtractDoubleValue(json, propertyName, out double value) ? value : 0d;
+        }
+
+        private static bool TryExtractDoubleValue(string json, string propertyName, out double result)
+        {
+            result = 0d;
             string quotedKey = propertyName.StartsWith("\"") && propertyName.EndsWith("\"")
                 ? propertyName
                 : "\"" + propertyName + "\"";
@@ -123,7 +124,7 @@ namespace ChillWithYou.EnvSync.Services
             while (true)
             {
                 start = json.IndexOf(quotedKey, searchStart, StringComparison.Ordinal);
-                if (start < 0) return 0d;
+                if (start < 0) return false;
 
                 int colon = start + quotedKey.Length;
                 while (colon < json.Length && char.IsWhiteSpace(json[colon])) colon++;
@@ -139,16 +140,15 @@ namespace ChillWithYou.EnvSync.Services
             while (start < json.Length && char.IsWhiteSpace(json[start])) start++;
             int end = start;
             while (end < json.Length && "-+0123456789.eE".IndexOf(json[end]) >= 0) end++;
-            if (end <= start) return 0d;
+            if (end <= start) return false;
+            if (end < json.Length && !char.IsWhiteSpace(json[end]) &&
+                json[end] != ',' && json[end] != '}') return false;
 
-            double result;
             return double.TryParse(
                 json.Substring(start, end - start),
                 NumberStyles.Float | NumberStyles.AllowExponent,
                 CultureInfo.InvariantCulture,
-                out result)
-                ? result
-                : 0d;
+                out result) && !double.IsNaN(result) && !double.IsInfinity(result);
         }
 
         private static string ExtractStringValue(string json, string prefix, string suffix)
@@ -160,15 +160,20 @@ namespace ChillWithYou.EnvSync.Services
             return end < 0 ? null : json.Substring(start, end - start);
         }
 
-        private static string ExtractFirstArrayString(string json, string prefix)
+        private static string ExtractFirstArrayString(string json, string propertyName)
         {
             if (string.IsNullOrEmpty(json)) return null;
-            int start = json.IndexOf(prefix, StringComparison.Ordinal);
+            int start = json.IndexOf(propertyName, StringComparison.Ordinal);
             if (start < 0) return null;
-            start += prefix.Length;
+            start += propertyName.Length;
+            while (start < json.Length && char.IsWhiteSpace(json[start])) start++;
+            if (start >= json.Length || json[start++] != ':') return null;
+            while (start < json.Length && char.IsWhiteSpace(json[start])) start++;
+            if (start >= json.Length || json[start++] != '[') return null;
+            while (start < json.Length && char.IsWhiteSpace(json[start])) start++;
+            if (start >= json.Length || json[start] != '"') return null;
 
-            int quoteStart = json.IndexOf('"', start);
-            if (quoteStart < 0) return null;
+            int quoteStart = start;
             int quoteEnd = json.IndexOf('"', quoteStart + 1);
             return quoteEnd < 0
                 ? null

@@ -33,7 +33,8 @@ namespace ChillWithYou.EnvSync.Core
             bool forceApply,
             bool rescheduleWeatherCheck,
             float refreshIntervalSeconds,
-            WeatherSyncMode mode = WeatherSyncMode.Regular)
+            WeatherSyncMode mode = WeatherSyncMode.Regular,
+            bool acquireWeather = true)
         {
             Policy = policy ?? throw new ArgumentNullException(nameof(policy));
             Source = source ?? throw new ArgumentNullException(nameof(source));
@@ -43,6 +44,7 @@ namespace ChillWithYou.EnvSync.Core
             RescheduleWeatherCheck = rescheduleWeatherCheck;
             RefreshIntervalSeconds = Math.Max(1f, refreshIntervalSeconds);
             Mode = mode;
+            AcquireWeather = acquireWeather;
         }
 
         internal SyncPolicySnapshot Policy { get; }
@@ -58,6 +60,7 @@ namespace ChillWithYou.EnvSync.Core
         internal bool RescheduleWeatherCheck { get; }
         internal float RefreshIntervalSeconds { get; }
         internal WeatherSyncMode Mode { get; }
+        internal bool AcquireWeather { get; }
 
         internal bool IsDebug => Inputs.IsDebug;
         internal bool DebugConfigurationValid => Inputs.ConfigurationValid;
@@ -75,7 +78,8 @@ namespace ChillWithYou.EnvSync.Core
                 ForceApply || newer.ForceApply,
                 RescheduleWeatherCheck || newer.RescheduleWeatherCheck,
                 newer.RefreshIntervalSeconds,
-                newer.Mode);
+                newer.Mode,
+                AcquireWeather || newer.AcquireWeather);
         }
     }
 
@@ -135,6 +139,12 @@ namespace ChillWithYou.EnvSync.Core
             if (request == null) throw new ArgumentNullException(nameof(request));
             if (_running)
             {
+                // The active sync supersedes a cache-only tick's captured inputs.
+                if (!request.AcquireWeather)
+                {
+                    onComplete?.Invoke(null);
+                    yield break;
+                }
                 QueuePending(request, onComplete);
                 yield break;
             }
@@ -186,7 +196,19 @@ namespace ChillWithYou.EnvSync.Core
                     request.Policy,
                     inputs,
                     request.ForceApply,
-                    false,
+                    request.Policy.CanControlTime,
+                    NextDelay(request, null),
+                    null));
+                yield break;
+            }
+
+            if (!request.AcquireWeather)
+            {
+                onComplete(new WeatherSyncResult(
+                    request.Policy,
+                    request.Inputs,
+                    request.ForceApply,
+                    request.Policy.CanControlTime || request.Policy.CanControlWeather,
                     NextDelay(request, null),
                     null));
                 yield break;

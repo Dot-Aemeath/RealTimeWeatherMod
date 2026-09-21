@@ -6,6 +6,28 @@ namespace RealTimeWeatherMod.Tests.Services
 {
     public class WeatherPayloadParserTests
     {
+        [Theory]
+        [InlineData("{\"current\":{\"weather_code\":null,\"temperature_2m\":null}}")]
+        [InlineData("{\"current\":{\"temperature_2m\":20}}")]
+        [InlineData("{\"current\":{\"weather_code\":1}}")]
+        [InlineData("{\"current\":{\"weather_code\":1.5,\"temperature_2m\":20}}")]
+        public void ParseOpenMeteoWeather_InvalidRequiredFields_ReturnsNull(string json)
+        {
+            Assert.Null(WeatherPayloadParser.ParseOpenMeteoWeather(json, DateTime.Now));
+        }
+
+        [Fact]
+        public void ParseSunSchedule_NullSunrise_DoesNotConsumeSunset()
+        {
+            Assert.Null(WeatherPayloadParser.ParseOpenMeteoSunSchedule("{\"daily\":{\"sunrise\":[null],\"sunset\":[\"2026-09-08T18:30\"]}}"));
+        }
+
+        [Fact]
+        public void ParseSeniverseWeather_MissingTemperature_ReturnsNull()
+        {
+            Assert.Null(WeatherPayloadParser.ParseSeniverseWeather("{\"now\":{\"code\":\"1\",\"text\":\"Clear\"}}", DateTime.Now));
+        }
+
         [Fact]
         public void ParseSeniverseWeather_ReadsCurrentObservation()
         {

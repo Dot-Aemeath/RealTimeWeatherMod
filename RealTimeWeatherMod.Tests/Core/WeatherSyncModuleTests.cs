@@ -24,6 +24,7 @@ namespace RealTimeWeatherMod.Tests.Core
             Assert.True(result.ApplyEnvironment);
             Assert.False(result.UpdateWeatherUi);
             Assert.Null(result.Weather);
+            Assert.True(result.RefreshSunSchedule);
         }
 
         [Fact]
@@ -199,6 +200,43 @@ namespace RealTimeWeatherMod.Tests.Core
             Assert.Equal(1, secondCallbacks);
         }
 
+        [Fact]
+        public void Synchronize_TimeTickDuringAcquisition_DoesNotOverwriteFreshWeather()
+        {
+            var acquisition = new FakeAcquisition
+            {
+                NextResult = new WeatherFetchResult(Weather(11), WeatherFetchOrigin.Fresh, 60f, null)
+            };
+            var effects = new FakeEffects();
+            var module = new WeatherSyncModule(acquisition, effects);
+            IEnumerator first = module.Synchronize(Request(Policy(true, true, true)), null);
+            Assert.True(first.MoveNext());
+            var firstRun = Assert.IsAssignableFrom<IEnumerator>(first.Current);
+
+            Run(module.Synchronize(
+                Request(Policy(true, true, true), inputWeather: Weather(1), acquireWeather: false), null));
+            Run(firstRun);
+            Run(first);
+
+            Assert.Equal(1, acquisition.FetchCount);
+            Assert.Equal(1, effects.EnvironmentApplies);
+            Assert.Equal(1, effects.UiUpdates);
+            Assert.Equal(11, effects.AppliedInputs.Weather.Code);
+        }
+
+        [Fact]
+        public void Synchronize_TimeTick_UsesSnapshotWithoutAcquisition()
+        {
+            var acquisition = new FakeAcquisition();
+            var module = new WeatherSyncModule(acquisition, new FakeEffects());
+            WeatherSyncResult result = null;
+            Run(module.Synchronize(Request(Policy(true, true, true), inputWeather: Weather(11), acquireWeather: false), value => result = value));
+            Assert.Equal(0, acquisition.FetchCount);
+            Assert.Equal(11, result.Weather.Code);
+            Assert.True(result.ApplyEnvironment);
+            Assert.True(result.RefreshSunSchedule);
+        }
+
         private static WeatherSyncRequest Request(
             SyncPolicySnapshot policy,
             bool forceNetwork = false,
@@ -208,7 +246,8 @@ namespace RealTimeWeatherMod.Tests.Core
             bool debugValid = true,
             string debugError = null,
             WeatherInfo inputWeather = null,
-            WeatherSyncMode mode = WeatherSyncMode.Regular)
+            WeatherSyncMode mode = WeatherSyncMode.Regular,
+            bool acquireWeather = true)
         {
             return new WeatherSyncRequest(
                 policy,
@@ -228,7 +267,7 @@ namespace RealTimeWeatherMod.Tests.Core
                 false,
                 reschedule,
                 refreshSeconds,
-                mode);
+                mode, acquireWeather);
         }
 
         private static SyncPolicySnapshot Policy(bool time, bool weather, bool ui)
