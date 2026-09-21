@@ -1,65 +1,61 @@
 using System;
-using System.Collections.Concurrent;
 using System.Threading;
-using UnityEngine;
+using System.Threading.Tasks;
 
 namespace UnityExplorerMcp.Core
 {
     internal static class MainThreadDispatcher
     {
         private static SynchronizationContext _mainContext;
-        private static bool _initialized = false;
+        private static int _mainThreadId;
 
         public static void InitializeFromMainThread()
         {
             _mainContext = SynchronizationContext.Current;
-            _initialized = true;
-        }
-
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        private static void Initialize()
-        {
-            _mainContext = SynchronizationContext.Current;
-            _initialized = true;
+            _mainThreadId = Thread.CurrentThread.ManagedThreadId;
         }
 
         public static object Execute(Func<object> func, int timeoutMs = 10000)
         {
-            if (!_initialized)
-            {
-                _mainContext = SynchronizationContext.Current;
-                _initialized = true;
-            }
+            if (func == null) throw new ArgumentNullException(nameof(func));
+            SynchronizationContext context = _mainContext;
+            if (context == null)
+                throw new InvalidOperationException("Unity main-thread context is not initialized");
+            if (Thread.CurrentThread.ManagedThreadId == _mainThreadId) return func();
 
-            var mre = new ManualResetEventSlim(false);
-            object result = null;
-            Exception exception = null;
-
-            _mainContext.Post(_ =>
+            // Pending work may be cancelled; code that has started cannot be interrupted safely.
+            int state = 0; // pending=0, running=1, cancelled=2
+            var completion = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            context.Post(_ =>
             {
-                try { result = func(); }
-                catch (Exception ex) { exception = ex; }
-                finally { mre.Set(); }
+                if (Interlocked.CompareExchange(ref state, 1, 0) != 0) return;
+                try { completion.TrySetResult(func()); }
+                catch (Exception ex) { completion.TrySetException(ex); }
             }, null);
 
-            if (!mre.Wait(timeoutMs))
-                throw new TimeoutException("Main thread execution timed out after " + timeoutMs + "ms");
+            try
+            {
+                if (!completion.Task.Wait(timeoutMs))
+                {
+                    bool cancelled = Interlocked.CompareExchange(ref state, 2, 0) == 0;
+                    throw new TimeoutException(cancelled
+                        ? "Main thread request timed out and was cancelled before execution"
+                        : "Main thread request timed out after execution started; it may still complete. Do not automatically retry mutations.");
+                }
+            }
+            catch (AggregateException)
+            {
+                return completion.Task.GetAwaiter().GetResult();
+            }
 
-            if (exception != null)
-                throw exception;
-
-            return result;
+            return completion.Task.GetAwaiter().GetResult();
         }
 
         public static bool ExecuteAsync(Action action)
         {
-            if (!_initialized)
-            {
-                _mainContext = SynchronizationContext.Current;
-                _initialized = true;
-            }
-            if (_mainContext == null) return false;
-            _mainContext.Post(_ => action(), null);
+            SynchronizationContext context = _mainContext;
+            if (context == null) return false;
+            context.Post(_ => action(), null);
             return true;
         }
     }

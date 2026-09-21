@@ -31,9 +31,8 @@ namespace UnityExplorerMcp.MCP.Tools
             int count = 50;
             if (args != null && args.TryGetValue("count", out var cv))
             {
-                if (cv is long l) count = (int)l;
-                else if (cv is double d) count = (int)d;
-                else int.TryParse(cv?.ToString(), out count);
+                if (int.TryParse(cv?.ToString(), out int parsed) && parsed > 0)
+                    count = System.Math.Min(parsed, Core.ConsoleCaptureService.MaxLogs);
             }
 
             var logs = _consoleService.GetRecent(count);

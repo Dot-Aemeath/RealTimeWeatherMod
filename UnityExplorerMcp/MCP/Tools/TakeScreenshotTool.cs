@@ -54,7 +54,7 @@ namespace UnityExplorerMcp.MCP.Tools
 
             var captured = ScreenCapture.CaptureScreenshotAsTexture();
             if (captured == null)
-                return new McpContentItem { type = "text", text = "{\"error\":\"Failed to capture screenshot\"}" };
+                return new McpContentItem { type = "text", text = "{\"error\":\"Failed to capture screenshot\"}", isError = true };
 
             Texture2D output = captured;
             if (captured.width != width || captured.height != height)
@@ -63,7 +63,7 @@ namespace UnityExplorerMcp.MCP.Tools
                 if (output == null)
                 {
                     UnityEngine.Object.DestroyImmediate(captured);
-                    return new McpContentItem { type = "text", text = "{\"error\":\"Failed to resize screenshot\"}" };
+                    return new McpContentItem { type = "text", text = "{\"error\":\"Failed to resize screenshot\"}", isError = true };
                 }
             }
 
@@ -72,7 +72,7 @@ namespace UnityExplorerMcp.MCP.Tools
             UnityEngine.Object.DestroyImmediate(captured);
 
             if (pngBytes == null || pngBytes.Length == 0)
-                return new McpContentItem { type = "text", text = "{\"error\":\"Failed to encode screenshot\"}" };
+                return new McpContentItem { type = "text", text = "{\"error\":\"Failed to encode screenshot\"}", isError = true };
 
             string base64 = Convert.ToBase64String(pngBytes);
             return new McpContentItem

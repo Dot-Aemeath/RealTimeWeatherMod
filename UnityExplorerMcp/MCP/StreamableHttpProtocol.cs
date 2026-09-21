@@ -92,7 +92,8 @@ namespace UnityExplorerMcp.MCP
                 return McpHttpResponse.Text(400, "Bad Request");
             }
 
-            if (!IsAllowedHost(request.Headers) || request.Headers.ContainsKey("Origin"))
+            if (!IsAllowedHost(request.Headers) || request.Headers.ContainsKey("Origin") ||
+                request.Headers.ContainsKey("Sec-Fetch-Site"))
             {
                 return McpHttpResponse.Text(403, "Forbidden");
             }
@@ -132,10 +133,16 @@ namespace UnityExplorerMcp.MCP
                 return McpHttpResponse.Text(406, "Not Acceptable");
             }
 
+            if (!JsonHelper.TryDeserialize(request.Body, out object document))
+                return McpHttpResponse.Json(400, "Bad Request",
+                    JsonHelper.SerializeJsonRpcError(null, -32700, "Parse error"));
+
+            if (document is List<object> batch)
+                return CreateBatchResponse(batch, request.Headers);
+
             McpHttpValidationResult validation =
-                McpStreamableHttpRequestValidator.Validate(
-                    request.Body,
-                    request.Headers);
+                McpStreamableHttpRequestValidator.ValidateMessage(
+                    document as Dictionary<string, object>, request.Headers);
             if (!validation.IsValid)
             {
                 return McpHttpResponse.Json(
@@ -155,6 +162,36 @@ namespace UnityExplorerMcp.MCP
                 result.HttpStatusCode,
                 ReasonPhrase(result.HttpStatusCode),
                 result.ResponseBody);
+        }
+
+        private McpHttpResponse CreateBatchResponse(
+            List<object> batch,
+            Dictionary<string, string> headers)
+        {
+            // Batching was removed in 2025-06-18; retain it for 2025-03-26 clients.
+            if (batch.Count == 0 ||
+                (headers.TryGetValue("MCP-Protocol-Version", out string version) &&
+                 version != "2025-03-26"))
+                return McpHttpResponse.Json(400, "Bad Request",
+                    JsonHelper.SerializeJsonRpcError(null, -32600, "Invalid Request"));
+
+            var responses = new List<string>();
+            foreach (object item in batch)
+            {
+                McpHttpValidationResult validation = McpStreamableHttpRequestValidator.ValidateMessage(
+                    item as Dictionary<string, object>, headers);
+                if (!validation.IsValid)
+                {
+                    responses.Add(validation.ErrorBody);
+                    continue;
+                }
+                McpProtocolResult result = _handler.Process(validation.Message);
+                if (result.ResponseBody != null) responses.Add(result.ResponseBody);
+            }
+
+            return responses.Count == 0
+                ? McpHttpResponse.Empty(202, "Accepted")
+                : McpHttpResponse.Json(200, "OK", "[" + string.Join(",", responses) + "]");
         }
 
         private static string ReasonPhrase(int statusCode)
@@ -230,6 +267,7 @@ namespace UnityExplorerMcp.MCP
             var buffer = new byte[Math.Min(8192, maxRequestBytes)];
             int totalRead = 0;
             int bodyStart = -1;
+            int headerScanStart = 0;
             int contentLength = 0;
             bool hasContentLength = false;
             bool isChunked = false;
@@ -267,13 +305,22 @@ namespace UnityExplorerMcp.MCP
                     totalRead += read;
                     if (bodyStart < 0)
                     {
-                        string headerText = Encoding.ASCII.GetString(buffer, 0, totalRead);
-                        int headerEnd = headerText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                        int headerEnd = -1;
+                        for (int i = headerScanStart; i + 3 < totalRead; i++)
+                        {
+                            if (buffer[i] == '\r' && buffer[i + 1] == '\n' &&
+                                buffer[i + 2] == '\r' && buffer[i + 3] == '\n')
+                            {
+                                headerEnd = i;
+                                break;
+                            }
+                        }
+                        headerScanStart = Math.Max(0, totalRead - 3);
                         if (headerEnd >= 0)
                         {
                             bodyStart = headerEnd + 4;
                             ParseHeaders(
-                                headerText.Substring(0, headerEnd),
+                                Encoding.ASCII.GetString(buffer, 0, headerEnd),
                                 out method,
                                 out target,
                                 headers);

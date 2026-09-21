@@ -28,9 +28,14 @@ UnityExplorerMcp Plugin (BepInEx)
 
 ### 部署
 
-1. 编译项目：`dotnet build UnityExplorerMcp/UnityExplorerMcp.csproj`
-2. DLL 自动复制到 `BepInEx/plugins/UnityExplorerMcp/`
-3. 启动游戏
+1. 在仓库根目录复制 `.env.props.example` 为 `.env.props`，把 `REALTIMEWEATHER_GAME_DIR` 改为本机游戏目录。该本地文件已被 Git 忽略。
+2. 编译项目：`dotnet build UnityExplorerMcp/UnityExplorerMcp.csproj`
+3. DLL 自动复制到 `BepInEx/plugins/UnityExplorerMcp/`
+4. 启动一次游戏生成配置。桥接服务器默认关闭；本地调试时在 `BepInEx/config/chillwithyou.unityexplorermcp.cfg` 的 `[MCP]` 中设置 `Enabled = true` 并重启游戏。
+5. `execute_code` 默认不注册；仅可信开发调试需要时设置 `AllowExecuteCode = true` 并重启。普通天气测试接口不需要此权限。测试结束后关闭服务器并重启或退出游戏。
+
+构建也接受进程环境变量 `REALTIMEWEATHER_GAME_DIR`，以及一次性的
+`-p:GameDir="<游戏目录>"`；两者都不需要修改项目文件。
 
 传输层单元测试不依赖游戏安装：
 
@@ -129,6 +134,8 @@ envsync_debug({ "action": "disable" })
 
 ### 推荐定位流程
 
+以下流程仅用于用户已明确要求的游戏内调试或视觉验证；读取本页或修改源码不自动授权启动游戏、调用 MCP 或调整运行时 UI。按当前问题选择步骤，无需每次执行完整流程。
+
 1. 用户把鼠标移到需要调整的控件上，调用 `get_mouse_element`。
 2. 已知按钮文案时，先调用 `search_elements`；它会同时匹配 GameObject 名称、完整路径和 Text/TMP 文本。
 3. 使用结果中的 `instanceId` 调用 `inspect_element`，避免同名预制体或隐藏副本造成误判。
@@ -154,8 +161,12 @@ envsync_debug({ "action": "disable" })
 - JSON-RPC 请求直接返回 `200 application/json`；可接受的 notification 返回无正文的 `202 Accepted`
 - `GET /mcp` 按当前规范返回 `405 Method Not Allowed`，不再建立旧式 endpoint-event SSE 长连接
 - 服务无会话状态且不发送 `Mcp-Session-Id`，多个客户端可并发、独立调用同一端点
-- 仅监听 loopback；只接受发往本机 Host、且不带浏览器 `Origin` 的请求
+- 仅监听 IPv4 loopback（127.0.0.1）；只接受发往本机 Host、且不带浏览器 `Origin` / `Sec-Fetch-Site` 的请求
+- 最多同时处理 8 个连接，请求总大小不超过 1 MiB，读取整个请求的期限为 15 秒；多余连接关闭
 - 服务没有鉴权；这里的 Host/Origin 校验用于阻止浏览器借 localhost 调用 `execute_code`，不用于防御已能在本机运行程序的攻击者。不要端口转发或反向代理到其他设备
+- 主天气插件本身不启动这个 HTTP 服务；只有单独安装并显式开启桥接插件才开放端口。启用期间仍信任本机进程，`AllowExecuteCode` 不是代码沙箱。不要在不可信本机环境中开启。
+
+本地防护回归：启用桥接并进入游戏后运行 `./scripts/Test-LocalMcpSecurity.ps1`。脚本只连接 127.0.0.1，验证来源/Host 拒绝、大小限制、8 连接上限和 15 秒读取期限；会暂时占满连接槽，不要与其他 MCP 验收并行运行。
 
 ## 项目结构
 
@@ -202,3 +213,5 @@ UnityExplorerMcp.Tests/          — 不依赖 Unity 的传输与协议契约测
 - [ ] 支持更多运行时查询（材质、动画、粒子系统）
 - [ ] Mouse-Inspect 视觉反馈
 - [ ] 需要列表变更通知时，为 `subscriptions/listen` 增加请求作用域 SSE 响应
+
+布局预览最多保留 64 个会话，每个会话最多 256 个元素；达到上限时需先回滚已有预览。场景卸载及后续预览调用会清理已销毁对象的记录。宽高参数表示 RectTransform 的实际尺寸。

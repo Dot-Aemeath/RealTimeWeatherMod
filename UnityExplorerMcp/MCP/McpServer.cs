@@ -17,6 +17,7 @@ namespace UnityExplorerMcp.MCP
     internal sealed class McpServer
     {
         private const int MaxRequestBytes = 1024 * 1024;
+        private readonly SemaphoreSlim _connections = new SemaphoreSlim(8, 8);
 
         private readonly int _port;
         private readonly ManualLogSource _logger;
@@ -76,7 +77,17 @@ namespace UnityExplorerMcp.MCP
                 try
                 {
                     TcpClient client = _listener.AcceptTcpClient();
-                    ThreadPool.QueueUserWorkItem(HandleClient, client);
+                    if (!IPAddress.IsLoopback(((IPEndPoint)client.Client.RemoteEndPoint).Address) ||
+                        !_connections.Wait(0))
+                    {
+                        client.Close();
+                        continue;
+                    }
+                    if (!ThreadPool.QueueUserWorkItem(HandleClient, client))
+                    {
+                        client.Close();
+                        _connections.Release();
+                    }
                 }
                 catch when (_cts.IsCancellationRequested)
                 {
@@ -102,7 +113,10 @@ namespace UnityExplorerMcp.MCP
                     McpHttpRequest request;
                     try
                     {
-                        request = McpHttpWire.ReadRequest(stream, MaxRequestBytes);
+                        // A total read deadline also bounds clients sending one byte
+                        // at a time, which per-read socket timeouts cannot constrain.
+                        using (var deadline = new Timer(_ => client.Close(), null, 15000, Timeout.Infinite))
+                            request = McpHttpWire.ReadRequest(stream, MaxRequestBytes);
                     }
                     catch (InvalidDataException)
                     {
@@ -128,10 +142,12 @@ namespace UnityExplorerMcp.MCP
             {
                 // Client disconnects and request timeouts are normal transport events.
             }
+            catch (ObjectDisposedException) { }
             catch (Exception ex)
             {
                 _logger.LogError("[UnityExplorerMcp] Handle error: " + ex.Message);
             }
+            finally { _connections.Release(); }
         }
 
         private static McpContentItem ExecuteTool(

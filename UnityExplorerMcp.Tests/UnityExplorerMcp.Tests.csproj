@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\UnityExplorerMcp\Core\MainThreadDispatcher.cs" Link="Core\MainThreadDispatcher.cs" />
     <Compile Include="..\UnityExplorerMcp\MCP\JsonHelper.cs" Link="MCP\JsonHelper.cs" />
     <Compile Include="..\UnityExplorerMcp\MCP\McpJsonRpcHandler.cs" Link="MCP\McpJsonRpcHandler.cs" />
     <Compile Include="..\UnityExplorerMcp\MCP\McpStreamableHttpRequestValidator.cs" Link="MCP\McpStreamableHttpRequestValidator.cs" />

@@ -27,11 +27,11 @@ namespace UnityExplorerMcp.MCP.Tools
         public override McpContentItem ExecuteOnMain(Dictionary<string, object> args)
         {
             if (args == null || !args.TryGetValue("code", out var codeVal))
-                return new McpContentItem { type = "text", text = "{\"error\":\"Missing 'code' argument\"}" };
+                return new McpContentItem { type = "text", text = "{\"error\":\"Missing 'code' argument\"}", isError = true };
 
             string code = codeVal?.ToString();
             if (string.IsNullOrEmpty(code))
-                return new McpContentItem { type = "text", text = "{\"error\":\"Empty code\"}" };
+                return new McpContentItem { type = "text", text = "{\"error\":\"Empty code\"}", isError = true };
 
             try
             {
@@ -47,7 +47,8 @@ namespace UnityExplorerMcp.MCP.Tools
                 return new McpContentItem
                 {
                     type = "text",
-                    text = MCP.JsonHelper.Serialize(new { success = false, error = ex.Message })
+                    text = MCP.JsonHelper.Serialize(new { success = false, error = ex.Message }),
+                    isError = true
                 };
             }
         }

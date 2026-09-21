@@ -56,12 +56,19 @@ namespace UnityExplorerMcp.MCP
             string body,
             Dictionary<string, string> headers)
         {
-            Dictionary<string, object> message = JsonHelper.DeserializeSimple(body);
-            if (message == null)
+            if (!JsonHelper.TryDeserialize(body, out object value))
             {
                 return Error(null, -32700, "Parse error");
             }
 
+            return ValidateMessage(value as Dictionary<string, object>, headers);
+        }
+
+        internal static McpHttpValidationResult ValidateMessage(
+            Dictionary<string, object> message,
+            Dictionary<string, string> headers)
+        {
+            if (message == null) return Error(null, -32600, "Invalid Request");
             object id = GetResponseId(message);
             string method = GetMethod(message);
             bool isInitialize = string.Equals(
@@ -79,28 +86,18 @@ namespace UnityExplorerMcp.MCP
                 // Standard handshake: the requested version travels in the body and
                 // no mirrored headers or per-request metadata are required yet.
                 string requestedVersion = GetInitializeProtocolVersion(message);
-                if (!McpJsonRpcHandler.IsSupportedProtocolVersion(requestedVersion))
+                if (string.IsNullOrEmpty(requestedVersion))
                 {
-                    return McpHttpValidationResult.Error(
-                        400,
-                        JsonHelper.SerializeJsonRpcError(
-                            id,
-                            UnsupportedProtocolVersion,
-                            "Unsupported protocol version",
-                            new
-                            {
-                                supported = McpJsonRpcHandler.GetSupportedProtocolVersions(),
-                                requested = requestedVersion
-                            }));
+                    return Error(id, -32602, "Missing protocol version");
                 }
             }
             else
             {
                 if (!hasVersionHeader)
                 {
-                    return HeaderError(
-                        id,
-                        "MCP-Protocol-Version header is missing");
+                    if (GetBodyProtocolVersion(message) != null)
+                        return HeaderError(id, "MCP-Protocol-Version header is missing");
+                    headerVersion = "2025-03-26";
                 }
 
                 if (!McpJsonRpcHandler.IsSupportedProtocolVersion(headerVersion))
@@ -307,6 +304,8 @@ namespace UnityExplorerMcp.MCP
                 decoded = encoded;
                 return IsSafePlainHeaderValue(encoded);
             }
+
+            if (encoded.Length < prefix.Length + suffix.Length) return false;
 
             string payload = encoded.Substring(
                 prefix.Length,

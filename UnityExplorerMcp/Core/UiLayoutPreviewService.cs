@@ -48,6 +48,19 @@ namespace UnityExplorerMcp.Core
 
         private static readonly Dictionary<string, Dictionary<int, RectTransformState>> Sessions =
             new Dictionary<string, Dictionary<int, RectTransformState>>();
+        private const int MaxSessions = 64;
+        private const int MaxElementsPerSession = 256;
+
+        public static void PruneDestroyedTargets()
+        {
+            foreach (var id in new List<string>(Sessions.Keys))
+            {
+                var states = Sessions[id];
+                foreach (var key in new List<int>(states.Keys))
+                    if (states[key].target == null) states.Remove(key);
+                if (states.Count == 0) Sessions.Remove(id);
+            }
+        }
 
         public static object Apply(
             string previewId,
@@ -63,17 +76,24 @@ namespace UnityExplorerMcp.Core
             bool matchHeight)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
+            PruneDestroyedTargets();
             if (string.IsNullOrEmpty(previewId)) previewId = Guid.NewGuid().ToString("N");
 
             if (!Sessions.TryGetValue(previewId, out var states))
             {
+                if (Sessions.Count >= MaxSessions)
+                    throw new InvalidOperationException("Preview session limit reached; roll back an existing preview first");
                 states = new Dictionary<int, RectTransformState>();
                 Sessions[previewId] = states;
             }
 
             int instanceId = target.gameObject.GetInstanceID();
             if (!states.ContainsKey(instanceId))
+            {
+                if (states.Count >= MaxElementsPerSession)
+                    throw new InvalidOperationException("Preview element limit reached; roll back this preview first");
                 states[instanceId] = RectTransformState.Capture(target);
+            }
 
             if (reference != null)
             {
@@ -81,12 +101,10 @@ namespace UnityExplorerMcp.Core
                 if (matchHeight) height = reference.rect.height;
             }
 
-            if (width.HasValue || height.HasValue)
-            {
-                target.sizeDelta = new Vector2(
-                    width ?? target.sizeDelta.x,
-                    height ?? target.sizeDelta.y);
-            }
+            if (width.HasValue)
+                target.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width.Value);
+            if (height.HasValue)
+                target.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height.Value);
 
             if (reference != null)
                 PlaceRelative(target, reference, placement, gap);

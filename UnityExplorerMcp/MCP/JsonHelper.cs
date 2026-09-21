@@ -22,8 +22,10 @@ namespace UnityExplorerMcp.MCP
             if (obj is bool b) return b ? "true" : "false";
             if (obj is int i) return i.ToString();
             if (obj is long l) return l.ToString();
-            if (obj is float f) return f.ToString("R", CultureInfo.InvariantCulture);
-            if (obj is double d) return d.ToString("R", CultureInfo.InvariantCulture);
+            if (obj is float f) return float.IsNaN(f) || float.IsInfinity(f)
+                ? EscapeString(f.ToString(CultureInfo.InvariantCulture)) : f.ToString("R", CultureInfo.InvariantCulture);
+            if (obj is double d) return double.IsNaN(d) || double.IsInfinity(d)
+                ? EscapeString(d.ToString(CultureInfo.InvariantCulture)) : d.ToString("R", CultureInfo.InvariantCulture);
             if (obj is decimal m) return m.ToString(CultureInfo.InvariantCulture);
             if (obj is Enum e) return EscapeString(e.ToString());
             if (obj is IDictionary dict) return SerializeDictionary(dict, depth, maxDepth);
@@ -134,9 +136,15 @@ namespace UnityExplorerMcp.MCP
 
         public static Dictionary<string, object> DeserializeSimple(string json)
         {
-            if (string.IsNullOrEmpty(json)) return null;
-            var parser = new JsonParser(json);
-            return parser.ParseDocument();
+            return TryDeserialize(json, out object value)
+                ? value as Dictionary<string, object>
+                : null;
+        }
+
+        internal static bool TryDeserialize(string json, out object value)
+        {
+            value = null;
+            return !string.IsNullOrEmpty(json) && new JsonParser(json).TryParseDocument(out value);
         }
 
         private class JsonParser
@@ -154,11 +162,11 @@ namespace UnityExplorerMcp.MCP
                 _pos = 0;
             }
 
-            public Dictionary<string, object> ParseDocument()
+            public bool TryParseDocument(out object result)
             {
-                Dictionary<string, object> result = ParseObject();
+                result = ParseValue();
                 SkipWhitespace();
-                return !_failed && _pos == _json.Length ? result : null;
+                return !_failed && _pos == _json.Length;
             }
 
             private void SkipWhitespace()

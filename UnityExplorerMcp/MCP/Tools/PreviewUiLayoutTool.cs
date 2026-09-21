@@ -120,7 +120,9 @@ namespace UnityExplorerMcp.MCP.Tools
 
         private static McpContentItem Error(string message)
         {
-            return Text(new { error = message });
+            McpContentItem result = Text(new { error = message });
+            result.isError = true;
+            return result;
         }
     }
 }

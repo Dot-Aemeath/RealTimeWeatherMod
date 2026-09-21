@@ -14,6 +14,17 @@ namespace UnityExplorerMcp.Tests
             "\"name\":\"tests\",\"version\":\"1\"}," +
             "\"io.modelcontextprotocol/clientCapabilities\":{}}";
 
+        [Theory]
+        [InlineData("cross-site")]
+        [InlineData("same-origin")]
+        [InlineData("none")]
+        public void BrowserFetchMetadataIsRejected(string site)
+        {
+            var request = CurrentPost("browser", "server/discover");
+            request.Headers["Sec-Fetch-Site"] = site;
+            Assert.Equal(403, CreateProtocol().CreateResponse(request).StatusCode);
+        }
+
         [Fact]
         public void Discover_AdvertisesSupportedVersionsAndServerMetadata()
         {
@@ -154,11 +165,11 @@ namespace UnityExplorerMcp.Tests
                 CurrentPost("no-initialize", "initialize"));
 
             Assert.Equal(400, response.StatusCode);
-            Assert.Equal(-32022L, ErrorCode(response));
+            Assert.Equal(-32602L, ErrorCode(response));
         }
 
         [Fact]
-        public void StandardRequest_MissingVersionHeader_IsRejected()
+        public void StandardRequest_MissingVersionHeader_UsesMarchProtocol()
         {
             StreamableHttpProtocol protocol = CreateProtocol();
             McpHttpRequest request = Post(
@@ -167,8 +178,7 @@ namespace UnityExplorerMcp.Tests
 
             McpHttpResponse response = protocol.CreateResponse(request);
 
-            Assert.Equal(400, response.StatusCode);
-            Assert.Equal(-32020L, ErrorCode(response));
+            Assert.Equal(200, response.StatusCode);
         }
 
         [Fact]
@@ -198,7 +208,7 @@ namespace UnityExplorerMcp.Tests
         }
 
         [Fact]
-        public void StandardInitialize_UnsupportedVersion_Returns32022()
+        public void StandardInitialize_UnsupportedVersion_NegotiatesSupportedVersion()
         {
             StreamableHttpProtocol protocol = CreateProtocol();
 
@@ -210,12 +220,9 @@ namespace UnityExplorerMcp.Tests
                     "\"capabilities\":{}," +
                     "\"clientInfo\":{\"name\":\"sdk\",\"version\":\"1.0\"}"));
 
-            Assert.Equal(400, response.StatusCode);
-            Assert.Equal(-32022L, ErrorCode(response));
-            var error = Assert.IsType<Dictionary<string, object>>(Parse(response.Body)["error"]);
-            var data = Assert.IsType<Dictionary<string, object>>(error["data"]);
-            var supported = Assert.IsType<List<object>>(data["supported"]);
-            Assert.Contains("2025-11-25", supported);
+            Assert.Equal(200, response.StatusCode);
+            var result = Assert.IsType<Dictionary<string, object>>(Parse(response.Body)["result"]);
+            Assert.Equal("2025-11-25", result["protocolVersion"]);
         }
 
         [Fact]
@@ -677,6 +684,98 @@ namespace UnityExplorerMcp.Tests
             Assert.Contains("Content-Length: 0\r\n", raw);
             Assert.Contains("Cache-Control: no-store\r\n", raw);
             Assert.Contains("X-Content-Type-Options: nosniff\r\n", raw);
+        }
+
+
+        [Theory]
+        [InlineData("null")]
+        [InlineData("1")]
+        [InlineData("\"text\"")]
+        [InlineData("[]")]
+        public void ValidNonRequestJson_ReturnsInvalidRequest(string body)
+        {
+            Assert.Equal(-32600L, ErrorCode(CreateProtocol().CreateResponse(Post(body))));
+        }
+
+        [Fact]
+        public void MarchBatch_ReturnsRequestsAndOmitsNotifications()
+        {
+            var request = Post("[{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"},{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"},null]");
+            var response = CreateProtocol().CreateResponse(request);
+            Assert.Equal(200, response.StatusCode);
+            Assert.True(JsonHelper.TryDeserialize(response.Body, out var parsed));
+            var batch = Assert.IsType<List<object>>(parsed);
+            Assert.Equal(2, batch.Count);
+            Assert.Equal(1L, Assert.IsType<Dictionary<string, object>>(batch[0])["id"]);
+            request.Headers["MCP-Protocol-Version"] = "2025-06-18";
+            Assert.Equal(-32600L, ErrorCode(CreateProtocol().CreateResponse(request)));
+        }
+
+        [Fact]
+        public void MirroredHeader_OverlappingSentinel_ReturnsHeaderError()
+        {
+            var request = CurrentPost("bad", "tools/call", "\"name\":\"alpha\",\"arguments\":{}", "=?base64?=");
+            var response = CreateProtocol(new FakeTool("alpha")).CreateResponse(request);
+            Assert.Equal(400, response.StatusCode);
+            Assert.Equal(-32020L, ErrorCode(response));
+        }
+
+        [Theory]
+        [InlineData("remote.example:8972")]
+        [InlineData("localhost.evil:8972")]
+        public void Post_RejectsUntrustedHost(string host)
+        {
+            var request = CurrentPost("host", "tools/list");
+            request.Headers["Host"] = host;
+            Assert.Equal(403, CreateProtocol().CreateResponse(request).StatusCode);
+        }
+
+        [Fact]
+        public void Post_RejectsNonJsonContentType()
+        {
+            var request = CurrentPost("type", "tools/list");
+            request.Headers["Content-Type"] = "text/plain";
+            Assert.Equal(415, CreateProtocol().CreateResponse(request).StatusCode);
+        }
+
+        [Theory]
+        [InlineData("z\r\n", "Invalid chunk size")]
+        [InlineData("1\r\nx!!", "Invalid chunk terminator")]
+        [InlineData("0\r\ninvalid\r\n\r\n", "Invalid chunk trailer")]
+        [InlineData("1000\r\n", "Chunked HTTP body exceeds size limit")]
+        public void WireReader_RejectsMalformedChunks(string chunks, string message)
+        {
+            string wire = "POST /mcp HTTP/1.1\r\nHost: localhost:8972\r\nTransfer-Encoding: chunked\r\n\r\n" + chunks;
+            using var stream = new MemoryStream(Encoding.ASCII.GetBytes(wire));
+            var error = Assert.Throws<InvalidDataException>(() => McpHttpWire.ReadRequest(stream, 1024));
+            Assert.Equal(message, error.Message);
+        }
+
+        [Fact]
+        public void WireReader_RejectsOversizedHeaders()
+        {
+            using var stream = new SlowStream(Encoding.ASCII.GetBytes("POST /mcp HTTP/1.1\r\nX: " + new string('a', 1100)), 1);
+            Assert.Throws<InvalidDataException>(() => McpHttpWire.ReadRequest(stream, 1024));
+        }
+
+        [Fact]
+        public void WireWriter_CountsUtf8BodyBytes()
+        {
+            var response = CreateProtocol(new FakeTool("天气")).CreateResponse(CurrentPost("bytes", "tools/list"));
+            using var stream = new MemoryStream();
+            McpHttpWire.WriteResponse(stream, response);
+            string wire = Encoding.UTF8.GetString(stream.ToArray());
+            Assert.Contains("Content-Length: " + Encoding.UTF8.GetByteCount(response.Body) + "\r\n", wire);
+            Assert.EndsWith("\r\n\r\n" + response.Body, wire);
+        }
+
+        [Fact]
+        public void Serialize_NonFiniteNumbers_ProducesValidJson()
+        {
+            string json = JsonHelper.Serialize(new object[] { double.NaN, double.PositiveInfinity, float.NegativeInfinity });
+            using var parsed = System.Text.Json.JsonDocument.Parse(json);
+            Assert.Equal("NaN", parsed.RootElement[0].GetString());
+            Assert.Equal("Infinity", parsed.RootElement[1].GetString());
         }
 
         private static StreamableHttpProtocol CreateProtocol(params IMcpTool[] tools)

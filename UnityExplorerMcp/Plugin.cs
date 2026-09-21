@@ -1,6 +1,7 @@
 using BepInEx;
 using BepInEx.Logging;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityExplorerMcp.Core;
 using UnityExplorerMcp.MCP;
 using UnityExplorerMcp.MCP.Tools;
@@ -21,8 +22,18 @@ namespace UnityExplorerMcp
 
             var port = Config.Bind("MCP", "Port", 8972,
                 "HTTP server port for MCP connections").Value;
+            var enabled = Config.Bind("MCP", "Enabled", false,
+                "Enable the local debugging server. Restart required; keep disabled during normal play.").Value;
+            var allowExecuteCode = Config.Bind("MCP", "AllowExecuteCode", false,
+                "Expose arbitrary C# execution to local clients. Trusted development only; restart required.").Value;
+            if (!enabled)
+            {
+                Logger.LogInfo("[UnityExplorerMcp] Local debugging server disabled.");
+                return;
+            }
 
             MainThreadDispatcher.InitializeFromMainThread();
+            SceneManager.sceneUnloaded += OnSceneUnloaded;
 
             _consoleService = new ConsoleCaptureService(Logger);
             _consoleService.Start();
@@ -31,7 +42,7 @@ namespace UnityExplorerMcp
             _mcpServer.RegisterTool(new GetUiHierarchyTool());
             _mcpServer.RegisterTool(new InspectElementTool());
             _mcpServer.RegisterTool(new SearchElementsTool());
-            _mcpServer.RegisterTool(new ExecuteCodeTool());
+            if (allowExecuteCode) _mcpServer.RegisterTool(new ExecuteCodeTool());
             _mcpServer.RegisterTool(new EnvSyncDebugTool());
             _mcpServer.RegisterTool(new GetConsoleLogsTool(_consoleService));
             _mcpServer.RegisterTool(new TakeScreenshotTool());
@@ -56,10 +67,16 @@ namespace UnityExplorerMcp
 
         private void OnApplicationQuit()
         {
+            SceneManager.sceneUnloaded -= OnSceneUnloaded;
             _shutdownRequested = true;
             _mcpServer?.Stop();
             _consoleService?.Stop();
             Logger.LogInfo("[UnityExplorerMcp] Clean shutdown.");
+        }
+
+        private static void OnSceneUnloaded(Scene scene)
+        {
+            UiLayoutPreviewService.PruneDestroyedTargets();
         }
     }
 }

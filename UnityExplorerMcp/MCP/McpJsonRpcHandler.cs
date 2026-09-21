@@ -228,25 +228,25 @@ namespace UnityExplorerMcp.MCP
             Dictionary<string, object> parameters)
         {
             string requestedVersion = GetRequestedProtocolVersion(parameters);
-            if (!IsSupportedProtocolVersion(requestedVersion))
+            if (string.IsNullOrEmpty(requestedVersion))
             {
                 return McpProtocolResult.Request(
                     JsonHelper.SerializeJsonRpcError(
                         id,
-                        UnsupportedProtocolVersionError,
-                        "Unsupported protocol version",
-                        new
-                        {
-                            supported = GetSupportedProtocolVersions(),
-                            requested = requestedVersion
-                        }));
+                        -32602,
+                        "Missing protocol version"));
             }
+
+            // initialize negotiates a handshake-capable version, not the stateless draft.
+            string negotiatedVersion = IsSupportedProtocolVersion(requestedVersion)
+                ? requestedVersion
+                : LegacyProtocolVersion;
 
             return Respond(
                 id,
                 new
                 {
-                    protocolVersion = requestedVersion,
+                    protocolVersion = negotiatedVersion,
                     capabilities = new
                     {
                         tools = new { listChanged = false }
