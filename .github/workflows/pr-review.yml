@@ -90,7 +90,7 @@ jobs:
             --format json \
             --concurrency 2 \
             --timeout 15 \
-            --background "C# Unity BepInEx mod for Chill With You Lo-Fi Story. RealTimeWeatherMod/ (plugin: Core/automation, Patches/Harmony, Services/API, Models/DTO), UnityExplorerMcp/ (MCP bridge), tests/ (xUnit .NET 9). Critical: Unity main thread safety, Harmony patch non-destructiveness, IDisposable cleanup, null safety, API key protection." \
+            --background "C# Unity BepInEx mod for Chill With You Lo-Fi Story. RealTimeWeatherMod/ (plugin: Core/automation, Patches/Harmony, Services/IO, Pure/Core+Services+Models/Unity-free logic), UnityExplorerMcp/ (MCP bridge), RealTimeWeatherMod.Tests/ and UnityExplorerMcp.Tests/ (xUnit .NET 9). Critical: Unity main thread safety, Harmony patch non-destructiveness, IDisposable cleanup, null safety, API key protection." \
             > /tmp/ocr-result.json 2>/tmp/ocr-stderr.log || true
 
       - name: Dump review output

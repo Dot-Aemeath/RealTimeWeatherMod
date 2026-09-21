@@ -1,5 +1,12 @@
 # RealTimeWeatherMod — Agent 参考
 
+## 任务执行与指令范围
+
+- 在系统、开发者和工具权限边界内，用户明确指令优先于 Skill 的一般指导。已获授权的可逆仓库内工作直接完成，不重复确认、不停在能力说明、复述或计划；只询问会实质改变结果、范围、访问权限或风险的歧义，其余采用最小合理解释。
+- Skill 若导致暂停、额外确认或偏离任务，指出并链接具体 `SKILL.md`，引用具体规则并解释适用条件；先完成不依赖该决定的已授权工作。
+- 按任务读取下文引用的架构、MCP 或发布文档。`RealTimeWeatherMod/docs/`、`docs/superpowers/` 中的旧交接、复盘和计划是历史资料，其 STOP、全量重写、强制子智能体和逐步测试要求不作为当前工作指令；实现事实以当前源码和架构文档核对。
+- `.opencodereview/rule.json` 和 `.github/workflows/pr-review.yml` 服务于 PR 自动审查；不要求本地开发另起审查、委派或循环修复。委派遵循当前会话的授权和工具约束，验证边界不因委派扩大。
+
 ## 项目总览
 
 BepInEx 插件（.NET Framework 4.7.2），为游戏《Chill with You: Lo-Fi Story》同步真实天气。
@@ -7,17 +14,21 @@ BepInEx 插件（.NET Framework 4.7.2），为游戏《Chill with You: Lo-Fi Sto
 
 ## Build & Test
 
-仓库包含 `RealTimeWeatherMod.slnx`。日常修改优先验证受影响的项目：
+仓库包含 `RealTimeWeatherMod.slnx`。以下是可选命令，不是每次必须全部执行的清单。日常改动只运行受影响项目的编译与必要的定向冷测试（用 `--filter` 选择相关测试）。纯指令、文档修改只检查内容和 diff。必要检查通过后，仅因新改动、失败或具体未解决风险才重复或扩大验证；不默认新增测试、跑全套测试或发起独立审查。
 
 ```
 dotnet build RealTimeWeatherMod/RealTimeWeather.csproj
-dotnet build UnityExplorerMcp/UnityExplorerMcp.csproj     # 编译后自动复制 DLL 到游戏 BepInEx/plugins/
-dotnet test RealTimeWeatherMod.Tests/RealTimeWeatherMod.Tests.csproj
-dotnet test UnityExplorerMcp.Tests/UnityExplorerMcp.Tests.csproj
+dotnet build UnityExplorerMcp/UnityExplorerMcp.csproj -p:PluginOutputDir="<仓库内临时输出目录的绝对路径>"
+dotnet test RealTimeWeatherMod.Tests/RealTimeWeatherMod.Tests.csproj --filter "<相关测试筛选表达式>"
+dotnet test UnityExplorerMcp.Tests/UnityExplorerMcp.Tests.csproj --filter "<相关测试筛选表达式>"
 ```
 
-主插件和 MCP 都通过 `$(GameDir)` 引用本地游戏程序集；默认路径不可用时传入
-`-p:GameDir="<游戏目录>"`。测试项目不依赖 Unity 或游戏安装。
+主插件和 MCP 通过仓库根目录的 `Directory.Build.props` 共用 `$(GameDir)`。本机首次构建时复制
+`.env.props.example` 为被 Git 忽略的 `.env.props`，并把 `REALTIMEWEATHER_GAME_DIR` 改为当前设备的游戏目录；
+也可设置同名进程环境变量，或临时传入 `-p:GameDir="<游戏目录>"`。项目文件中不写死设备路径。
+测试项目不依赖 Unity 或游戏安装。
+
+MCP 的 `CopyToPluginDir` 会在构建后复制 DLL；冷编译须通过 `PluginOutputDir` 将复制目标留在仓库内。只有用户已授权部署时才使用默认游戏插件目录。游戏、GUI、MCP 实机调用及端到端验证不属于默认验证；完成冷检查后报告未验证部分，等待用户后续明确要求。
 
 ## Git 提交规范
 
@@ -49,7 +60,7 @@ dotnet test UnityExplorerMcp.Tests/UnityExplorerMcp.Tests.csproj
 | `Bulbul.EnvironmentController` | Harmony Postfix `Setup` → `GameEnvironmentRuntime` | 状态读取、直连或模拟点击 |
 | `Bulbul.EnvironmentUI` | `GameEnvironmentRuntime` 反射 `ChangeTime` / `OnClickButtonChangeTime` | 启动期及常规时段切换 |
 | `Bulbul.WindowViewService` | 经 EnvironmentUI 获取，反射 `ActivateWindow` / `DeactivateWindow` | 启动期降水窗景同步 |
-| `Bulbul.UnlockConditionService` | Harmony Prefix `IsUnlocked` | 上帝模式（拦截解锁判断） |
+| `Bulbul.UnlockConditionService` | Harmony Prefix `IsUnlocked` / `IsPurchasableItem` | 上帝模式与可购买物品解锁判断 |
 | `Bulbul.CurrentDateAndTimeUI` | Harmony Postfix `UpdateDateAndTime` | 日期栏追加天气文本 |
 | `Bulbul.SaveDataManager` | `GameEnvironmentRuntime` 直接引用并兼容旧字段 | 读取窗景状态 |
 | `RoomGameManager` | 反射 `CurrentMainState` | 过场剧情检测（state≠14 时禁止同步） |
@@ -80,4 +91,4 @@ dotnet test UnityExplorerMcp.Tests/UnityExplorerMcp.Tests.csproj
 
 ## 发布新版本
 
-发布或同步版本号时必须使用项目 skill `$release-realtime-weather`。开始修改前必须先让用户明确确认目标版本号。
+发布、同步版本号或检查版本一致性时使用 [release-realtime-weather](.agents/skills/release-realtime-weather/SKILL.md)。版本确认与验证范围由该 Skill 统一说明。
