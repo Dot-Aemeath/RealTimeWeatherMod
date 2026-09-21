@@ -9,12 +9,11 @@
     <LangVersion>7.3</LangVersion>
     <OutputType>Library</OutputType>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <UsesGameAssemblies>true</UsesGameAssemblies>
   </PropertyGroup>
 
   <PropertyGroup>
-    <!-- Game installation path; override via environment variable -->
-    <GameDir Condition="'$(GameDir)' == ''">D:\SteamLibrary\steamapps\common\Chill with You Lo-Fi Story</GameDir>
-    <PluginOutputDir>$(GameDir)\BepInEx\plugins\UnityExplorerMcp</PluginOutputDir>
+    <PluginOutputDir Condition="'$(PluginOutputDir)' == '' and '$(GameDir)' != ''">$(GameDir)\BepInEx\plugins\UnityExplorerMcp</PluginOutputDir>
   </PropertyGroup>
 
   <ItemGroup>

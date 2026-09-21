@@ -9,8 +9,10 @@
 /docs/*
 !/docs/adr/
 !/docs/architecture.md
+!/docs/smooth-time-transitions.md
 
 # User-specific files
+/.env.props
 *.rsuser
 *.suo
 *.user

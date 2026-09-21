@@ -11,6 +11,7 @@
     <RootNamespace>RealTimeWeatherMod</RootNamespace>
     <AssemblyName>RealTimeWeatherMod</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <UsesGameAssemblies>true</UsesGameAssemblies>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
@@ -31,9 +32,6 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
-  <PropertyGroup>
-    <GameDir Condition=" '$(GameDir)' == '' ">E:\SteamLibrary\steamapps\common\Chill with You Lo-Fi Story</GameDir>
-  </PropertyGroup>
   <ItemGroup>
     <Reference Include="0Harmony">
       <HintPath>$(GameDir)\BepInEx\core\0Harmony.dll</HintPath>
@@ -46,6 +44,26 @@
     </Reference>
     <Reference Include="R3">
       <HintPath>$(GameDir)\Chill With You_Data\Managed\R3.dll</HintPath>
+    </Reference>
+    <Reference Include="DistantLands.Cozy.Runtime">
+      <HintPath>$(GameDir)\Chill With You_Data\Managed\DistantLands.Cozy.Runtime.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="MagicLightmapSwitcher">
+      <HintPath>$(GameDir)\Chill With You_Data\Managed\MagicLightmapSwitcher.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.RenderPipelines.Core.Runtime">
+      <HintPath>$(GameDir)\Chill With You_Data\Managed\Unity.RenderPipelines.Core.Runtime.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Unity.RenderPipelines.Universal.Runtime">
+      <HintPath>$(GameDir)\Chill With You_Data\Managed\Unity.RenderPipelines.Universal.Runtime.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(GameDir)\Chill With You_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>False</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />

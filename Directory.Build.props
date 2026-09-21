@@ -1,0 +1,25 @@
+<Project>
+  <Import Project="$(MSBuildThisFileDirectory).env.props"
+    Condition="Exists('$(MSBuildThisFileDirectory).env.props')" />
+
+  <PropertyGroup>
+    <!--
+      Resolution order:
+      1. /p:GameDir=... supplied on the command line
+      2. REALTIMEWEATHER_GAME_DIR from the process environment
+      3. REALTIMEWEATHER_GAME_DIR declared in the ignored .env.props file
+    -->
+    <GameDir Condition="'$(GameDir)' == '' and '$(REALTIMEWEATHER_GAME_DIR)' != ''">$(REALTIMEWEATHER_GAME_DIR)</GameDir>
+  </PropertyGroup>
+
+  <Target Name="ValidateRealTimeWeatherGameDir"
+    BeforeTargets="ResolveAssemblyReferences"
+    Condition="'$(UsesGameAssemblies)' == 'true'">
+    <Error Condition="'$(GameDir)' == ''"
+      Text="GameDir is not configured. Copy .env.props.example to .env.props and set REALTIMEWEATHER_GAME_DIR, set that environment variable in the shell, or pass /p:GameDir=&quot;...&quot;." />
+    <Error Condition="'$(GameDir)' != '' and !Exists('$(GameDir)\Chill With You_Data\Managed\Assembly-CSharp.dll')"
+      Text="GameDir does not point to a valid Chill with You installation: $(GameDir)" />
+    <Error Condition="'$(GameDir)' != '' and !Exists('$(GameDir)\BepInEx\core\BepInEx.dll')"
+      Text="BepInEx was not found under GameDir: $(GameDir)" />
+  </Target>
+</Project>
