@@ -100,7 +100,7 @@ namespace ChillWithYou.EnvSync.Core
         /// Seniverse-normalized code space; OpenMeteo codes are mapped into it
         /// upstream by OpenMeteoWeatherMapper.
         /// </summary>
-        private static ModEnvironment? ResolveSceneryCode(int code)
+        internal static ModEnvironment? ResolveSceneryCode(int code)
         {
             if (code >= 20 && code <= 25) return ModEnvironment.Snow;
             if (code == 11 || code == 12 || (code >= 16 && code <= 18)) return ModEnvironment.ThunderRain;

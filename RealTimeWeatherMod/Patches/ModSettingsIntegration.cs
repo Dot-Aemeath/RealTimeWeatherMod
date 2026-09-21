@@ -148,6 +148,7 @@ namespace ChillWithYou.EnvSync.Patches
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_DETAIL", "Detailed Segments", "詳細セグメント", "详细时段" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_EGG", "Seasonal Scenery", "季節の景色", "季节性景色" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_AMBIENT", "Ambient Sounds", "環境音", "环境音效" });
+                    regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_RAIN_WINDOW", "Close Window in Rain", "雨天に窓を閉める", "下雨自动关窗" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_CITY", "City (Seniverse)", "都市（Seniverse）", "城市 (心知天气)" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_PROVIDER", "Weather Provider", "天気提供元", "天气数据源" });
                     regTransMethod.Invoke(managerInstance, new object[] { "ENV_SYNC_PROVIDER_SENIVERSE", "Seniverse", "Seniverse", "心知天气" });
@@ -245,6 +246,15 @@ namespace ChillWithYou.EnvSync.Patches
                     (value) =>
                     {
                         ChillEnvPlugin.Cfg_EnableAmbientSounds.Value = value;
+                        ChillEnvPlugin.Instance.Config.Save();
+                    });
+
+                AddToggleSafe(managerInstance, managerType,
+                    hasTranslation ? "ENV_SYNC_RAIN_WINDOW" : "下雨自动关窗",
+                    ChillEnvPlugin.Cfg_CloseWindowWhenRaining.Value,
+                    (value) =>
+                    {
+                        ChillEnvPlugin.Cfg_CloseWindowWhenRaining.Value = value;
                         ChillEnvPlugin.Instance.Config.Save();
                     });
 

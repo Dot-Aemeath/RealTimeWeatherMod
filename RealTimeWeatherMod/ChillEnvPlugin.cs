@@ -46,6 +46,7 @@ namespace ChillWithYou.EnvSync
 
     internal static ConfigEntry<bool> Cfg_EnableEasterEggs;
     internal static ConfigEntry<bool> Cfg_EnableAmbientSounds;
+    internal static ConfigEntry<bool> Cfg_CloseWindowWhenRaining;
 
     // 调试配置
     internal static ConfigEntry<bool> Cfg_DebugMode;
@@ -130,6 +131,11 @@ namespace ChillWithYou.EnvSync
 
       Cfg_EnableEasterEggs = Config.Bind("Automation", "EnableSeasonalEasterEggs", true, "启用季节性景色彩蛋自动托管");
       Cfg_EnableAmbientSounds = Config.Bind("Automation", "EnableAmbientSounds", false, "启用环境音效自动托管");
+      Cfg_CloseWindowWhenRaining = Config.Bind(
+        "Automation",
+        "CloseWindowWhenRaining",
+        true,
+        "下雨时阻止角色自动开窗；窗户已打开时，小雨30–90秒、雨3–8秒、雷雨1–4秒后由角色自动关窗");
 
       Cfg_DebugMode = Config.Bind("Debug", "EnableDebugMode", false, "调试模式");
       Cfg_DebugCode = Config.Bind("Debug", "SimulatedCode", 1, "模拟天气代码");

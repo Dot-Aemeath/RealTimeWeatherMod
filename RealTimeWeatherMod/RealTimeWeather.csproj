@@ -130,12 +130,14 @@
     <Compile Include="Patches\TimeTransitionPatches.cs" />
     <Compile Include="Core\ModEnvironmentContext.cs" />
     <Compile Include="Core\ModEnvironmentMap.cs" />
+    <Compile Include="Core\RainWindowAutomation.cs" />
     <Compile Include="Core\SceneryAutomationOwnership.cs" />
     <Compile Include="Core\SceneryAutomationSystem.cs" />
     <Compile Include="Core\SceneryAutomationTriggerState.cs" />
     <Compile Include="Core\SceneryAutomationUserData.cs" />
     <Compile Include="Core\WeatherDebugControl.cs" />
     <Compile Include="Patches\HarmonyPatches.cs" />
+    <Compile Include="Patches\RainWindowPatches.cs" />
     <Compile Include="Patches\ModSettingsIntegration.cs" />
     <Compile Include="Patches\UnlockConditionGodMode.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

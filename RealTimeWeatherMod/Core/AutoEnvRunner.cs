@@ -167,6 +167,7 @@ namespace ChillWithYou.EnvSync.Core
             WeatherDebugControl.TickPlayback();
             if (WeatherDebugControl.SmoothEnabled || GameEnvironmentRuntime.Shared.Transitions.NeedsTick)
                 GameEnvironmentRuntime.Shared.Transitions.Tick(BuildPolicySnapshot(), ModEnvironmentContext.Capture());
+            RainWindowAutomation.Tick();
             if (!ChillEnvPlugin.Initialized || GameEnvironmentRuntime.Shared.RegisteredControllerCount == 0)
             {
                 return;
