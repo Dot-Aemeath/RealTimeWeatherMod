@@ -165,8 +165,15 @@ namespace ChillWithYou.EnvSync.Core
         private void Update()
         {
             WeatherDebugControl.TickPlayback();
-            if (WeatherDebugControl.SmoothEnabled || GameEnvironmentRuntime.Shared.Transitions.NeedsTick)
-                GameEnvironmentRuntime.Shared.Transitions.Tick(BuildPolicySnapshot(), ModEnvironmentContext.Capture());
+            var runtime = GameEnvironmentRuntime.Shared;
+            bool smooth = WeatherDebugControl.SmoothEnabled;
+            if (smooth || runtime.Transitions.NeedsTick || runtime.Precipitation.NeedsTick)
+            {
+                SyncPolicySnapshot policy = BuildPolicySnapshot();
+                EnvironmentInputSnapshot inputs = ModEnvironmentContext.Capture();
+                if (smooth || runtime.Transitions.NeedsTick) runtime.Transitions.Tick(policy, inputs);
+                runtime.Precipitation.Tick(policy, inputs);
+            }
             RainWindowAutomation.Tick();
             if (!ChillEnvPlugin.Initialized || GameEnvironmentRuntime.Shared.RegisteredControllerCount == 0)
             {
@@ -414,9 +421,18 @@ namespace ChillWithYou.EnvSync.Core
 
         private void ApplyScenery(EnvironmentType? target, bool force)
         {
+            bool dry = !target.HasValue || target.Value == EnvironmentType.Snow;
             foreach (var env in SceneryWeathers)
             {
                 bool shouldBeActive = target.HasValue && target.Value == env;
+                // Rain stopping fades out first; switching rain grades keeps continuous particles.
+                if (!shouldBeActive && dry && env != EnvironmentType.Snow &&
+                    GameEnvironmentRuntime.Shared.Precipitation.TryDeferDeactivation(
+                        (ModEnvironment)Enum.Parse(typeof(ModEnvironment), env.ToString())))
+                {
+                    continue;
+                }
+
                 if (GameEnvironmentRuntime.Shared.TryApplySceneryState(
                     env,
                     shouldBeActive,
@@ -441,7 +457,7 @@ namespace ChillWithYou.EnvSync.Core
                 return;
             }
 
-            EnvironmentDecisionResult decision = EnvironmentDecision.Resolve(policy, inputs);
+            EnvironmentDecisionResult decision = EnvironmentDecision.Resolve(policy, inputs, GameEnvironmentRuntime.Shared.Transitions.UsesContinuousPresentation);
             EnvironmentType finalEnv = ModEnvironmentMap.ToGame(decision.Base);
 
             if (policy.CanControlTime)

@@ -65,6 +65,10 @@
       <HintPath>$(GameDir)\Chill With You_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>$(GameDir)\Chill With You_Data\Managed\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml.Linq" />
@@ -83,6 +87,10 @@
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(GameDir)\Chill With You_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(GameDir)\Chill With You_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>False</Private>
     </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(GameDir)\Chill With You_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
@@ -126,6 +134,8 @@
     <Compile Include="Core\TimeTransitionController.cs" />
     <Compile Include="Core\TimeTransitionRendering.cs" />
     <Compile Include="Core\TimeTransitionAtmosphere.cs" />
+    <Compile Include="Core\TimeTransitionClouds.cs" />
+    <Compile Include="Core\PrecipitationController.cs" />
     <Compile Include="Core\TimeTransitionFlares.cs" />
     <Compile Include="Patches\TimeTransitionPatches.cs" />
     <Compile Include="Core\ModEnvironmentContext.cs" />
@@ -139,6 +149,7 @@
     <Compile Include="Patches\HarmonyPatches.cs" />
     <Compile Include="Patches\RainWindowPatches.cs" />
     <Compile Include="Patches\ModSettingsIntegration.cs" />
+    <Compile Include="Patches\ManualWeatherPreview.cs" />
     <Compile Include="Patches\UnlockConditionGodMode.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\DecorationUnlockScanner.cs" />

@@ -21,9 +21,9 @@ public class LongRunningTimeTransitionTests
         const double uptime = 30 * 86400;
         var windows = new[]
         {
-            (Start: 5 * 3600 + 50 * 60, End: 6 * 3600 + 50 * 60, Boundary: 6.5 * 3600, From: ModEnvironment.Night, To: ModEnvironment.Day),
-            (Start: 17 * 3600 + 55 * 60, End: 18 * 3600 + 15 * 60, Boundary: 18d * 3600, From: ModEnvironment.Day, To: ModEnvironment.Sunset),
-            (Start: 18 * 3600 + 35 * 60, End: 19 * 3600 + 5 * 60, Boundary: 19d * 3600, From: ModEnvironment.Sunset, To: ModEnvironment.Night)
+            (Start: 5 * 3600 + 15 * 60, End: 7 * 3600 + 15 * 60, Boundary: 6.5 * 3600, From: ModEnvironment.Night, To: ModEnvironment.Day),
+            (Start: 17 * 3600 + 15 * 60, End: 18 * 3600 + 15 * 60, Boundary: 18d * 3600, From: ModEnvironment.Day, To: ModEnvironment.Sunset),
+            (Start: 18 * 3600 + 55 * 60, End: 20 * 3600 + 10 * 60, Boundary: 19d * 3600, From: ModEnvironment.Sunset, To: ModEnvironment.Night)
         };
         for (int seconds = 0; seconds <= 3 * 86400; seconds += 10)
         {

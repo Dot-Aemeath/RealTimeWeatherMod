@@ -175,7 +175,7 @@ namespace ChillWithYou.EnvSync.Core
                         action == StartupWeatherSyncAction.ApplyAndFinish)
                     {
                         EnvironmentDecisionResult decision =
-                            EnvironmentDecision.Resolve(policy, decisionInputs);
+                            EnvironmentDecision.Resolve(policy, decisionInputs, GameEnvironmentRuntime.Shared.Transitions.UsesContinuousPresentation);
                         bool applied = TryApplyStartupEnvironment(
                             policy,
                             decision,

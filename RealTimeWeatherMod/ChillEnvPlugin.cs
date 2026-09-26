@@ -12,7 +12,7 @@ namespace ChillWithYou.EnvSync
   [BepInPlugin("chillwithyou.envsync", "Chill Env Sync", PluginVersion)]
   public class ChillEnvPlugin : BaseUnityPlugin
   {
-    internal const string PluginVersion = "5.3.1";
+    internal const string PluginVersion = "5.3.2";
     internal const string BuildId = "settings-integration-20260811";
 
     internal static ChillEnvPlugin Instance;
@@ -108,7 +108,7 @@ namespace ChillWithYou.EnvSync
       Cfg_SunriseTime = Config.Bind("TimeConfig", "Sunrise", "06:30", "日出时间");
       Cfg_SunsetTime = Config.Bind("TimeConfig", "Sunset", "18:30", "日落时间");
       Cfg_EnableTimeSync = Config.Bind("TimeSync", "EnableTimeSync", true, "是否启用时间同步");
-      Cfg_EnableSmoothTransitions = Config.Bind("TimeSync", "EnableSmoothTransitions", false, "平滑时段切换：清晨渐变60分钟、傍晚渐变20分钟、完整黄昏20分钟、渐变入夜30分钟，随日出日落移动；手动及启动对齐用2秒，不改变雨雪效果");
+      Cfg_EnableSmoothTransitions = Config.Bind("TimeSync", "EnableSmoothTransitions", false, "平滑时段切换：白天光照连续变化，多云按时段叠加并淡入淡出；清晨渐变120分钟、傍晚渐变60分钟、完整黄昏40分钟、渐变入夜75分钟，随日出日落移动；手动及启动对齐用2秒；降雨按雨量连续调节雨丝与雷电并淡入淡出，雪景不变");
 
       Cfg_EnableWeatherSync = Config.Bind("WeatherAPI", "EnableWeatherSync", false, "是否启用天气API同步");
       Cfg_WeatherProvider = Config.Bind(

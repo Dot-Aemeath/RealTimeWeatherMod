@@ -16,8 +16,8 @@ namespace ChillWithYou.EnvSync.Core
             internal FieldInfo Field;
             internal readonly object[] Values = new object[4];
             internal AtmosphereProfile.SRPFlare WorkingFlare;
-            internal object OriginalFlare;
-            internal bool FlareOverridden;
+            internal object OriginalValue;
+            internal bool Overridden;
         }
 
         private readonly CozyWeather _sphere;
@@ -26,12 +26,21 @@ namespace ChillWithYou.EnvSync.Core
         private TimeBlend _blend;
         private CozyTimeModule _overriddenTime;
         private float _originalTime;
+        private DaylightVisual _daylight;
+        private readonly TimeTransitionClouds _clouds;
+        private Color _sunlightBefore, _horizonBefore;
+        private bool _daylightOverridden;
+        private Quaternion _solarRotation;
+        private readonly Vector3 _sunsetGlowDirection;
+        private readonly Dictionary<MeshRenderer, MaterialPropertyBlock> _glowOriginals = new Dictionary<MeshRenderer, MaterialPropertyBlock>();
+        private readonly MaterialPropertyBlock _glowWorking = new MaterialPropertyBlock();
 
         internal CozyWeather Sphere => _sphere;
 
         internal TimeTransitionAtmosphere(MyCozyWeatherService service, CozyWeather[] presets)
         {
             _sphere = (CozyWeather)AccessTools.Field(typeof(MyCozyWeatherService), "_cozyWeather").GetValue(service);
+            _clouds = new TimeTransitionClouds(service, _sphere);
             var pairs = (MyCozyWeatherService.AtmospherePair[])AccessTools.Field(typeof(MyCozyWeatherService), "_atmosphereProfiles").GetValue(service);
             var profiles = new AtmosphereProfile[4];
             for (int i = 0; i < 4; i++)
@@ -96,6 +105,11 @@ namespace ChillWithYou.EnvSync.Core
                             throw new InvalidOperationException("大气预设的离散资源不同: " + field.Name);
                 }
             }
+            int sunset = (int)ModEnvironment.Sunset;
+            float yaw = (float)_parameters.Find(p => p.Field.Name == nameof(CozyWeather.sunDirection)).Values[sunset];
+            float pitch = (float)_parameters.Find(p => p.Field.Name == nameof(CozyWeather.sunPitch)).Values[sunset];
+            _sunsetGlowDirection = -(Quaternion.Euler(0, yaw, pitch) *
+                Quaternion.Euler(_times[sunset] * 360 - 90, 0, 0) * Vector3.forward);
         }
 
         private static bool SameDiscreteValue(object a, object b)
@@ -105,7 +119,49 @@ namespace ChillWithYou.EnvSync.Core
             return a.GetType().IsClass && JsonUtility.ToJson(a) == JsonUtility.ToJson(b);
         }
 
-        internal void SetBlend(TimeBlend blend) { _blend = blend; }
+        internal void SetBlend(TimeBlend blend, DaylightVisual daylight) { _blend = blend; _daylight = daylight; }
+        internal void SetSolarRotation(Quaternion rotation) => _solarRotation = rotation;
+
+        internal void CompleteUpload(object sphere)
+        {
+            if (!ReferenceEquals(sphere, _sphere)) return;
+            float sunset = _daylight.Strength * _blend.Weight(ModEnvironment.Sunset);
+            if (sunset > 0)
+            {
+                // COZY shares one direction for the solar disk and the painted
+                // dusk glow. Only fog/cloud coloring retains the authored sunset
+                // composition; the sky disk and room shadows keep the solar orbit.
+                Vector3 glow = Vector3.Slerp(-(_solarRotation * Vector3.forward), _sunsetGlowDirection, sunset);
+                ApplySunsetGlow(_sphere.fogMesh, glow);
+                ApplySunsetGlow(_sphere.cloudMesh, glow);
+            }
+            else RestoreSunsetGlow();
+            if (_daylight.Strength <= 0) return;
+            // COZY and the room must use one world-space direction, including lens flares.
+            _sphere.sunTransform.rotation = _solarRotation;
+            Shader.SetGlobalVector(CozyShaderIDs.CZY_SunDirectionID, -(_solarRotation * Vector3.forward));
+        }
+
+        private void ApplySunsetGlow(MeshRenderer renderer, Vector3 direction)
+        {
+            if (renderer == null) return;
+            if (!_glowOriginals.ContainsKey(renderer))
+            {
+                var original = new MaterialPropertyBlock();
+                renderer.GetPropertyBlock(original);
+                _glowOriginals.Add(renderer, original);
+            }
+            renderer.GetPropertyBlock(_glowWorking);
+            _glowWorking.SetVector(CozyShaderIDs.CZY_SunDirectionID, direction);
+            renderer.SetPropertyBlock(_glowWorking);
+        }
+
+        internal void RestoreSunsetGlow()
+        {
+            foreach (var pair in _glowOriginals)
+                if (pair.Key != null) pair.Key.SetPropertyBlock(pair.Value.isEmpty ? null : pair.Value);
+            _glowOriginals.Clear();
+        }
 
         internal void RefreshNativeParameters()
         {
@@ -122,6 +178,11 @@ namespace ChillWithYou.EnvSync.Core
             float p = _blend.Amount;
             foreach (var parameter in _parameters)
             {
+                if (!parameter.Overridden)
+                {
+                    parameter.OriginalValue = parameter.Field.GetValue(_sphere);
+                    parameter.Overridden = true;
+                }
                 object a = parameter.Values[from];
                 object b = parameter.Values[to];
                 object value;
@@ -141,11 +202,6 @@ namespace ChillWithYou.EnvSync.Core
                         bf?.flare != null ? bf.scale : source?.scale ?? 1, p);
                     working.occlusionRadius = Mathf.Lerp(af?.flare != null ? af.occlusionRadius : source?.occlusionRadius ?? 0,
                         bf?.flare != null ? bf.occlusionRadius : source?.occlusionRadius ?? 0, p);
-                    if (!parameter.FlareOverridden)
-                    {
-                        parameter.OriginalFlare = parameter.Field.GetValue(_sphere);
-                        parameter.FlareOverridden = true;
-                    }
                     value = working;
                 }
                 else if (a is float af) value = Mathf.Lerp(af, (float)b, p);
@@ -154,26 +210,54 @@ namespace ChillWithYou.EnvSync.Core
                 else value = Vector3.Lerp((Vector3)a, (Vector3)b, p);
                 parameter.Field.SetValue(_sphere, value);
             }
+            float day = _blend.Weight(ModEnvironment.Day) * _daylight.Strength;
+            float edge = Mathf.Abs(_daylight.Progress * 2 - 1);
+            _sunlightBefore = _sphere.sunlightColor;
+            _horizonBefore = _sphere.skyHorizonColor;
+            _daylightOverridden = true;
+            float night = _daylight.Strength * _daylight.NightDepth * _blend.Weight(ModEnvironment.Night);
+            _sphere.sunlightColor *= 1 - .08f * edge * day - .18f * night;
+            float height = -(_solarRotation * Vector3.forward).y;
+            float disk = TimeTransitionSchedule.Smooth(Mathf.Clamp01(height / .015f));
+            float horizonGlow = TimeTransitionSchedule.Smooth(Mathf.Clamp01((height + .12f) / .16f));
+            _sphere.sunColor *= Mathf.Lerp(1, disk, _daylight.Strength);
+            _sphere.sunFlareColor *= Mathf.Lerp(1, horizonGlow, _daylight.Strength);
+            _sphere.sunlightColor *= Mathf.Lerp(1, disk, _daylight.Strength);
+            _sphere.skyHorizonColor = Color.Lerp(_sphere.skyHorizonColor,
+                  _sphere.skyHorizonColor * new Color(1.04f, .98f, .94f, 1), edge * day);
+            _sphere.skyHorizonColor *= 1 - .12f * night;
+            _clouds.Apply(_daylight.CombinedClouds(_blend), _blend, _daylight.Weather);
             if (_overriddenTime == null && _sphere.timeModule != null)
             {
                 _overriddenTime = _sphere.timeModule;
                 _originalTime = _overriddenTime.modifiedDayPercentage;
             }
             if (_overriddenTime != null)
-                _overriddenTime.modifiedDayPercentage = Mathf.Repeat(
-                    _times[from] + Mathf.DeltaAngle(_times[from] * 360, _times[to] * 360) / 360 * p, 1);
+            {
+                float nativePhase = Mathf.Repeat(_times[from] + Mathf.DeltaAngle(_times[from] * 360, _times[to] * 360) / 360 * p, 1);
+                _overriddenTime.modifiedDayPercentage = DaylightVisual.BlendPhase(nativePhase, _daylight.SolarPhase, _daylight.Strength);
+            }
         }
 
         internal void RestoreTime(object sphere)
         {
             if (!ReferenceEquals(sphere, _sphere)) return;
+            _clouds.Restore();
+            if (_daylightOverridden)
+            {
+                _sphere.sunlightColor = _sunlightBefore;
+                _sphere.skyHorizonColor = _horizonBefore;
+                _daylightOverridden = false;
+            }
             foreach (var parameter in _parameters)
-                if (parameter.FlareOverridden)
+            {
+                if (parameter.Overridden)
                 {
-                    parameter.Field.SetValue(_sphere, parameter.OriginalFlare);
-                    parameter.OriginalFlare = null;
-                    parameter.FlareOverridden = false;
+                    parameter.Field.SetValue(_sphere, parameter.OriginalValue);
+                    parameter.OriginalValue = null;
+                    parameter.Overridden = false;
                 }
+            }
             if (_overriddenTime == null) return;
             _overriddenTime.modifiedDayPercentage = _originalTime;
             _overriddenTime = null;

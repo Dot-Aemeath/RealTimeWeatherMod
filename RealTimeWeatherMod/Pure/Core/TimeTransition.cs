@@ -47,15 +47,15 @@ namespace ChillWithYou.EnvSync.Core
             DateTime set = date.Date + sunset;
             return new[]
             {
-                new TimeTransitionWindow { Boundary = rise, Start = rise.AddMinutes(-40), End = rise.AddMinutes(20) },
-                new TimeTransitionWindow { Boundary = set.AddMinutes(-30), Start = set.AddMinutes(-35), End = set.AddMinutes(-15) },
-                new TimeTransitionWindow { Boundary = set.AddMinutes(30), Start = set.AddMinutes(5), End = set.AddMinutes(35) }
+                new TimeTransitionWindow { Boundary = rise, Start = rise.AddMinutes(-75), End = rise.AddMinutes(45) },
+                new TimeTransitionWindow { Boundary = set.AddMinutes(-30), Start = set.AddMinutes(-75), End = set.AddMinutes(-15) },
+                new TimeTransitionWindow { Boundary = set.AddMinutes(30), Start = set.AddMinutes(25), End = set.AddMinutes(100) }
             };
         }
 
-        internal static ScheduledTimeBlend Resolve(SyncPolicySnapshot policy, EnvironmentInputSnapshot inputs)
+        internal static ScheduledTimeBlend Resolve(SyncPolicySnapshot policy, EnvironmentInputSnapshot inputs, bool independentClouds = false)
         {
-            var logical = EnvironmentDecision.Resolve(policy, inputs).Base;
+            var logical = EnvironmentDecision.Resolve(policy, inputs, independentClouds).Base;
             var result = new ScheduledTimeBlend { Logical = logical, Visual = TimeBlend.Single(logical) };
             if (inputs == null || !IsValid(inputs.Sunrise, inputs.Sunset)) return result;
 
@@ -66,8 +66,8 @@ namespace ChillWithYou.EnvSync.Core
                 foreach (var window in Windows(date, inputs.Sunrise, inputs.Sunset))
                 {
                     DateTime boundary = window.Boundary;
-                    var from = ResolveAt(policy, inputs, boundary.AddTicks(-1));
-                    var to = ResolveAt(policy, inputs, boundary);
+                    var from = ResolveAt(policy, inputs, boundary.AddTicks(-1), independentClouds);
+                    var to = ResolveAt(policy, inputs, boundary, independentClouds);
                     if (from == to) continue;
                     DateTime start = window.Start;
                     if (start > inputs.Now && (!result.NextWindowStart.HasValue || start < result.NextWindowStart))
@@ -80,7 +80,7 @@ namespace ChillWithYou.EnvSync.Core
             return result;
         }
 
-        private static bool IsValid(TimeSpan sunrise, TimeSpan sunset)
+        internal static bool IsValid(TimeSpan sunrise, TimeSpan sunset)
         {
             // The existing discrete resolver does not wrap a sunset ending after midnight.
             if (sunrise < TimeSpan.Zero || sunrise >= TimeSpan.FromDays(1) ||
@@ -89,12 +89,12 @@ namespace ChillWithYou.EnvSync.Core
             return windows[0].End <= windows[1].Start && windows[2].End <= windows[0].Start.AddDays(1);
         }
 
-        private static ModEnvironment ResolveAt(SyncPolicySnapshot policy, EnvironmentInputSnapshot inputs, DateTime now)
+        private static ModEnvironment ResolveAt(SyncPolicySnapshot policy, EnvironmentInputSnapshot inputs, DateTime now, bool independentClouds)
         {
             var sample = inputs.WithWeather(inputs.Weather);
             sample.Now = now;
             sample.TimeSegment = DebugScenario.DetermineTimeSegment(now, inputs.Sunrise, inputs.Sunset);
-            return EnvironmentDecision.Resolve(policy, sample).Base;
+            return EnvironmentDecision.Resolve(policy, sample, independentClouds).Base;
         }
 
         internal static float Smooth(float p)
@@ -118,6 +118,7 @@ namespace ChillWithYou.EnvSync.Core
         internal bool HasVisual { get; private set; }
         internal bool OwnsVisual { get; private set; }
         internal bool SuppressAutomatic => ManualUntil.HasValue;
+        internal int AlignmentRevision { get; private set; }
 
         private bool _wasEnabled;
         private bool _wasAutomatic;
@@ -169,7 +170,7 @@ namespace ChillWithYou.EnvSync.Core
         }
 
         internal void Tick(bool enabled, bool automatic, bool blocked, ScheduledTimeBlend schedule,
-            EnvironmentInputSnapshot inputs, double realtime)
+            EnvironmentInputSnapshot inputs, double realtime, bool immediate = false)
         {
             // Playback speed is intentional. Only an explicit seek restarts short alignment.
             bool jump = inputs.PlaybackRevision.HasValue
@@ -216,7 +217,13 @@ namespace ChillWithYou.EnvSync.Core
                     Mode == "manual" || Mode == "manual-hold";
                 Logical = schedule.Logical;
                 bool weatherChanged = _lastLogical != schedule.Logical && _lastBoundary == schedule.Boundary && !jump && !changedSchedule;
-                if (enter || jump || changedSchedule)
+                if (immediate)
+                {
+                    Current = schedule.Visual;
+                    HasVisual = true;
+                    _short = false;
+                }
+                else if (enter || jump || changedSchedule)
                 {
                     BeginShort(schedule.Visual, realtime);
                 }
@@ -266,6 +273,7 @@ namespace ChillWithYou.EnvSync.Core
 
         private void BeginShort(TimeBlend target, double realtime)
         {
+            AlignmentRevision++;
             if (!HasVisual) Seed(target.Dominant);
             _shortFrom = Current;
             _shortTarget = target;

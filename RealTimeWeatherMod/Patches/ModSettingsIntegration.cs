@@ -20,7 +20,7 @@ namespace ChillWithYou.EnvSync.Patches
     /// 使用方法：
     /// 将此脚本挂载到你的 BepInEx Plugin GameObject 上，或者在 Plugin.Start() 中手动挂载。
     /// </summary>
-    public class ModSettingsIntegration : MonoBehaviour
+    public partial class ModSettingsIntegration : MonoBehaviour
     {
         // 防止重复注册的标志位
         private static bool _settingsRegistered = false;

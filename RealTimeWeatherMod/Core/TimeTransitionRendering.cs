@@ -32,6 +32,7 @@ namespace ChillWithYou.EnvSync.Core
             internal Color Color;
             internal Quaternion Rotation;
             internal LightShadows Shadows;
+            internal float ShadowStrength;
         }
         private sealed class VolumeState
         {
@@ -70,6 +71,9 @@ namespace ChillWithYou.EnvSync.Core
         private bool _disposed;
         private ModEnvironment _logical;
         private ModEnvironment? _settled;
+        private ModEnvironment? _nativeBase;
+        private ModEnvironment? _singleLightmap;
+        private Quaternion _solarFrame;
 
         internal EnvironmentUI EnvironmentUi { get; }
         internal WindowViewService WindowService { get; }
@@ -103,6 +107,13 @@ namespace ChillWithYou.EnvSync.Core
                 throw new InvalidOperationException("活动 COZY 实例与时段模板重叠");
             InspectLightmaps();
             InspectRoots(presets);
+            var noon = _lights.FirstOrDefault(l => l.Preset == (int)ModEnvironment.Day && l.Enabled && l.Light.type == LightType.Directional);
+            if (noon == null) throw new InvalidOperationException("缺少白天主光，无法标定太阳轨道");
+            Vector3 noonDirection = -(noon.Rotation * Vector3.forward);
+            // Preserve the room's authored noon direction. The orthogonal horizon
+            // endpoints then define opposite sunrise/sunset sides of one tilted orbit.
+            _solarFrame = Quaternion.Euler(0, Mathf.Atan2(-noonDirection.z, noonDirection.x) * Mathf.Rad2Deg,
+                -Mathf.Acos(Mathf.Clamp(noonDirection.y, -1, 1)) * Mathf.Rad2Deg);
             foreach (var field in new[] { "_jetAdjuster", "_ferrisWheelAdjuster" })
             {
                 object adjuster = AccessTools.Field(typeof(WindowViewService), field).GetValue(windows);
@@ -158,7 +169,7 @@ namespace ChillWithYou.EnvSync.Core
                     throw new InvalidOperationException("时段根对象含活动 COZY 模板，无法安全同时启用");
                 foreach (var light in _roots[i].GetComponentsInChildren<Light>(true))
                     if (ActiveWithin(light.transform, root) && !light.transform.IsChildOf(templates[i].transform))
-                        _lights.Add(new LightState { Light = light, Preset = i, Intensity = light.intensity, Enabled = light.enabled, Color = light.color, Rotation = light.transform.rotation, Shadows = light.shadows });
+                        _lights.Add(new LightState { Light = light, Preset = i, Intensity = light.intensity, Enabled = light.enabled, Color = light.color, Rotation = light.transform.rotation, Shadows = light.shadows, ShadowStrength = light.shadowStrength });
                 foreach (var volume in _roots[i].GetComponentsInChildren<Volume>(true))
                     if (volume.enabled && ActiveWithin(volume.transform, root) && !volume.transform.IsChildOf(templates[i].transform))
                         _volumes.Add(new VolumeState { Volume = volume, Preset = i, Weight = volume.weight,
@@ -334,7 +345,7 @@ namespace ChillWithYou.EnvSync.Core
             Object.Destroy(profile);
         }
 
-        private void ApplyVolumes(TimeBlend blend)
+        private void ApplyVolumes(TimeBlend blend, WeatherVisual weather)
         {
             if (_volumes.Count == 0) return;
             var from = _volumes[(int)blend.From];
@@ -362,8 +373,24 @@ namespace ChillWithYou.EnvSync.Core
                 }
                 b.Override(working, blend.Amount);
                 if (a is Beautify.Universal.Beautify flareFrom && b is Beautify.Universal.Beautify flareTo)
+                {
                     _flares.DetailWeight = Mathf.Lerp(flareFrom.anamorphicFlaresIntensity.value > 0 ? 1 : 0,
                         flareTo.anamorphicFlaresIntensity.value > 0 ? 1 : 0, blend.Amount);
+                    var effect = (Beautify.Universal.Beautify)working;
+                    var clear = (Beautify.Universal.Beautify)_volumes[(int)ModEnvironment.Day].Effective.components.First(c => c is Beautify.Universal.Beautify);
+                    var cloudy = (Beautify.Universal.Beautify)_volumes[(int)ModEnvironment.Cloudy].Effective.components.First(c => c is Beautify.Universal.Beautify);
+                    float period = blend.Weight(ModEnvironment.Day) + .65f * blend.Weight(ModEnvironment.Sunset) + .25f * blend.Weight(ModEnvironment.Night);
+                    float dimming = weather.Dimming * period;
+                    float fog = weather.Fog * period;
+                    // Baked room lighting retains the time preset. Apply the native
+                    // cloudy/clear exposure ratio to its runtime postprocess copy,
+                    // while preserving hue and avoiding Cloudy's zero saturation.
+                    effect.brightness.value *= Mathf.Lerp(1, cloudy.brightness.value / clear.brightness.value, dimming);
+                    effect.contrast.value *= Mathf.Lerp(1, cloudy.contrast.value / clear.contrast.value, .5f * dimming + .3f * fog);
+                    effect.saturate.value *= 1 - .22f * dimming - .35f * fog;
+                    effect.anamorphicFlaresIntensity.value *= 1 - dimming;
+                    _flares.DetailWeight *= 1 - dimming;
+                }
             }
             foreach (var volume in _volumes) volume.Volume.weight = 0;
             _volumes[0].Volume.weight = 1;
@@ -419,19 +446,28 @@ namespace ChillWithYou.EnvSync.Core
                 toLit ? to.GetColor("_EmissionColor") : Color.clear, amount));
         }
 
-        internal void Apply(TimeBlend blend, ModEnvironment logical)
+        internal void Apply(TimeBlend blend, ModEnvironment logical, DaylightVisual daylight)
         {
             if (!IsValid) return;
             _logical = logical;
-            if (blend.IsSingle)
+            if (blend.IsSingle && daylight.Strength <= 0 && daylight.Clouds <= 0)
             {
                 Settle(blend.Dominant);
                 return;
             }
             _settled = null;
             IsBlending = true;
+            if (_nativeBase != logical)
+            {
+                // Native Cloudy also sets weather FX immediately. While blending,
+                // compose those FX from the visual Cloudy weight instead.
+                var native = logical == ModEnvironment.Cloudy ? ModEnvironment.Day : logical;
+                _cozy.ChangeCozyWeather((WindowViewType)Enum.Parse(typeof(WindowViewType), native.ToString()));
+                _atmosphere.RefreshNativeParameters();
+                _nativeBase = logical;
+            }
             ApplySmoothShadows();
-            _atmosphere.SetBlend(blend);
+            _atmosphere.SetBlend(blend, daylight);
             // Only the canonical opaque surface renders; original materials are never edited.
             foreach (var surface in _surfaces)
             {
@@ -475,10 +511,41 @@ namespace ChillWithYou.EnvSync.Core
                 foreach (var light in _lights.Where(l => l.Light.type == LightType.Directional)) light.Light.enabled = false;
                 sun.Light.intensity = Mathf.Lerp(from?.Intensity ?? 0, to?.Intensity ?? 0, blend.Amount);
                 sun.Light.color = Color.Lerp(from?.Color ?? to?.Color ?? sun.Color, to?.Color ?? from?.Color ?? sun.Color, blend.Amount);
-                sun.Light.transform.rotation = Quaternion.Slerp(from?.Rotation ?? to?.Rotation ?? sun.Rotation, to?.Rotation ?? from?.Rotation ?? sun.Rotation, blend.Amount);
+                var nativeRotation = Quaternion.Slerp((from ?? to ?? sun).Rotation, (to ?? from ?? sun).Rotation, blend.Amount);
+                var orbitRotation = _solarFrame * Quaternion.Euler(daylight.SolarPhase * 360 - 90, 0, 0);
+                var solarRotation = Quaternion.Slerp(nativeRotation, orbitRotation, daylight.Strength);
+                _atmosphere.SetSolarRotation(solarRotation);
+                sun.Light.transform.rotation = solarRotation;
+                float day = daylight.Strength * blend.Weight(ModEnvironment.Day);
+                float edge = Mathf.Abs(daylight.Progress * 2 - 1);
+                float night = daylight.Strength * daylight.NightDepth * blend.Weight(ModEnvironment.Night);
+                float cloudDim = daylight.Weather.Dimming * (.6f * blend.Weight(ModEnvironment.Day) + .45f * blend.Weight(ModEnvironment.Sunset) + .2f * blend.Weight(ModEnvironment.Night));
+                sun.Light.intensity *= (1 - .08f * edge * day - .18f * night) * (1 - cloudDim);
+                sun.Light.color = Color.Lerp(sun.Light.color, sun.Light.color * new Color(1.04f, .98f, .94f, 1), edge * day);
+                if (daylight.Strength > 0)
+                {
+                    float height = -(orbitRotation * Vector3.forward).y;
+                    var lighting = SolarLighting.Resolve(height, blend.Weight(ModEnvironment.Night), blend.Weight(ModEnvironment.Sunset));
+                    var nightLight = _lights.FirstOrDefault(l => l.Preset == (int)ModEnvironment.Night && l.Enabled && l.Light.type == LightType.Directional);
+                    sun.Light.intensity *= Mathf.Lerp(1, lighting.Illumination, daylight.Strength);
+                    sun.Light.shadowStrength = sun.ShadowStrength * Mathf.Lerp(1, lighting.Direct, daylight.Strength) *
+                        (1 - .9f * daylight.Weather.Dimming * (1 - blend.Weight(ModEnvironment.Cloudy)));
+                    if (height <= 0)
+                    {
+                        // Keep the unshadowed fill above the horizon and join the
+                        // native night direction continuously. The sky sun retains
+                        // its real, below-horizon orbit in the atmosphere adapter.
+                        Vector3 fillDirection = -(orbitRotation * Vector3.forward);
+                        fillDirection.y = -fillDirection.y;
+                        var fillRotation = Quaternion.Slerp(Quaternion.LookRotation(-fillDirection),
+                            nightLight?.Rotation ?? nativeRotation, lighting.NightDirection);
+                        sun.Light.transform.rotation = Quaternion.Slerp(nativeRotation, fillRotation, daylight.Strength);
+                        if (daylight.Strength >= 1) sun.Light.shadows = LightShadows.None;
+                    }
+                }
                 sun.Light.enabled = sun.Light.intensity > 0;
             }
-            ApplyVolumes(blend);
+            ApplyVolumes(blend, daylight.Weather);
             // Roots keep component ownership and transforms. Dormant descendants stay dormant.
             foreach (var root in _roots) root.SetActive(true);
             ApplyLightmaps(blend);
@@ -488,6 +555,17 @@ namespace ChillWithYou.EnvSync.Core
         private void ApplyLightmaps(TimeBlend blend)
         {
             if (OriginalScenario == null) return;
+            if (blend.IsSingle)
+            {
+                if (_singleLightmap != blend.Dominant)
+                {
+                    ReleasePair();
+                    _lightmaps.SwitchLightmap((int)blend.Dominant, OriginalScenario);
+                    _singleLightmap = blend.Dominant;
+                }
+                return;
+            }
+            _singleLightmap = null;
             if (_pair == null || _pairFrom != blend.From || _pairTo != blend.To)
             {
                 ReleasePair();
@@ -538,6 +616,8 @@ namespace ChillWithYou.EnvSync.Core
             }
             ApplyEmission(TimeBlend.Single(target));
             _settled = target;
+            _nativeBase = target;
+            _singleLightmap = target;
         }
 
         private void ApplySmoothShadows()
@@ -545,15 +625,20 @@ namespace ChillWithYou.EnvSync.Core
             // Keep the same filter in stable night and while blending: switching back to
             // Hard at the endpoint would reintroduce a visible discontinuity.
             foreach (var light in _lights)
-                if (light.Light != null && light.Light.type == LightType.Directional && light.Shadows != LightShadows.None)
-                    light.Light.shadows = LightShadows.Soft;
+                if (light.Light != null)
+                {
+                    light.Light.shadowStrength = light.ShadowStrength;
+                    if (light.Light.type == LightType.Directional && light.Shadows != LightShadows.None)
+                        light.Light.shadows = LightShadows.Soft;
+                }
         }
 
         private void RestoreComponents()
         {
             _atmosphere.RestoreTime(_atmosphere.Sphere);
+            _atmosphere.RestoreSunsetGlow();
             foreach (var light in _lights)
-                if (light.Light != null) { light.Light.intensity = light.Intensity; light.Light.enabled = light.Enabled; light.Light.color = light.Color; light.Light.transform.rotation = light.Rotation; }
+                if (light.Light != null) { light.Light.intensity = light.Intensity; light.Light.enabled = light.Enabled; light.Light.color = light.Color; light.Light.transform.rotation = light.Rotation; light.Light.shadowStrength = light.ShadowStrength; }
             foreach (var volume in _volumes)
                 if (volume.Volume != null)
                 {
@@ -600,6 +685,7 @@ namespace ChillWithYou.EnvSync.Core
         }
 
         internal void ApplyAtmosphere(object sphere) { if (IsBlending) _atmosphere.Apply(sphere); }
+        internal void CompleteAtmosphere(object sphere) { if (IsBlending) _atmosphere.CompleteUpload(sphere); }
         internal bool DrawFlares(CommandBuffer cmd, RenderTargetIdentifier source,
             RenderTargetIdentifier destination, Material material) =>
             IsBlending && _flares.Draw(cmd, source, destination, material);
@@ -608,10 +694,12 @@ namespace ChillWithYou.EnvSync.Core
         public void Dispose()
         {
             if (_disposed) return;
-            try { if (IsBlending) Settle(_logical); else RestoreComponents(); }
+            // An unloaded scene no longer owns the native services. Only release
+            // our copies; settling its old preset could write into the next scene.
+            try { if (IsBlending && IsValid) Settle(_logical); else RestoreComponents(); }
             finally
             {
-                foreach (var light in _lights) if (light.Light != null) light.Light.shadows = light.Shadows;
+                foreach (var light in _lights) if (light.Light != null) { light.Light.shadows = light.Shadows; light.Light.shadowStrength = light.ShadowStrength; }
                 foreach (var volume in _volumes) DestroyProfile(volume.Effective);
                 ReleasePair();
                 _disposed = true;

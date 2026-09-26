@@ -10,6 +10,9 @@ namespace ChillWithYou.EnvSync.Core
     {
         private readonly GameEnvironmentRuntime _runtime;
         private TimeTransitionState _state = new TimeTransitionState();
+        private DaylightPresentation _daylight = new DaylightPresentation();
+        private int _alignmentRevision;
+        private bool _continuous;
         private TimeTransitionRendering _rendering;
         private SyncPolicySnapshot _policy;
         private EnvironmentInputSnapshot _inputs;
@@ -30,6 +33,9 @@ namespace ChillWithYou.EnvSync.Core
         internal bool OwnsPresentation => HasRendering && _state.OwnsVisual;
         internal bool NeedsTick => _state.OwnsVisual;
         internal ModEnvironment Logical => _state.Logical;
+        internal bool UsesContinuousPresentation => _continuous && HasRendering && !_unavailable;
+        internal DaylightVisual Daylight => _daylight.Current;
+        internal DaylightVisual DaylightTarget => _daylight.Target;
         internal ModEnvironment CommittedLogical => ReadLogical();
         internal object WindowService => _rendering?.WindowService;
         internal object OriginalScenario => _rendering?.OriginalScenario;
@@ -53,7 +59,8 @@ namespace ChillWithYou.EnvSync.Core
                 _sceneHandle = scene;
             }
             if (!Enabled && !_state.OwnsVisual && !_state.HasVisual) return;
-            _schedule = TimeTransitionSchedule.Resolve(policy, inputs);
+            _continuous = Enabled && inputs != null && DaylightSchedule.IsValid(inputs.Sunrise, inputs.Sunset);
+            _schedule = TimeTransitionSchedule.Resolve(policy, inputs, _continuous);
             if (Blocked)
             {
                 if (!_wasBlocked) Release();
@@ -65,14 +72,27 @@ namespace ChillWithYou.EnvSync.Core
             if (_unavailable || (!Enabled && !_state.OwnsVisual)) return;
             if (!policy.CanControlTime && !_state.OwnsVisual) return;
             if (!EnsureRendering()) return;
-            if (!_state.HasVisual || !_state.OwnsVisual) _state.Seed(ReadLogical());
-            _state.Tick(Enabled, policy.CanControlTime, false, _schedule, inputs, Time.realtimeSinceStartupAsDouble);
+            if (!_state.HasVisual || !_state.OwnsVisual)
+            {
+                var native = ReadLogical();
+                _state.Seed(native);
+                _daylight.Seed(native);
+            }
+            bool immediate = WeatherDebugControl.ManualPreviewActive;
+            _state.Tick(Enabled, policy.CanControlTime, false, _schedule, inputs, Time.realtimeSinceStartupAsDouble, immediate);
+            _daylight.Tick(DaylightSchedule.Resolve(policy, inputs),
+                _continuous && policy.CanControlTime && !_state.ManualUntil.HasValue &&
+                _state.Mode != "manual" && _state.Mode != "manual-hold",
+                _alignmentRevision != _state.AlignmentRevision, Time.realtimeSinceStartupAsDouble, immediate);
+            _alignmentRevision = _state.AlignmentRevision;
             if (_state.OwnsVisual && (policy.CanControlTime || _state.ManualUntil.HasValue) && ReadLogical() != _state.Logical)
             {
                 _runtime.TryApplyBaseImmediately(ModEnvironmentMap.ToGame(_state.Logical), _applyMode);
                 _applyMode = EnvironmentApplyMode.Interactive;
             }
             Present();
+            if (!Enabled && !_state.OwnsVisual && policy.CanControlTime)
+                _runtime.TryApplyBaseImmediately(ModEnvironmentMap.ToGame(EnvironmentDecision.Resolve(policy, inputs).Base), _applyMode);
         }
 
         internal bool TryAutomaticRequest(EnvironmentApplyMode mode)
@@ -106,12 +126,17 @@ namespace ChillWithYou.EnvSync.Core
             var unlocks = AccessTools.Field(typeof(EnvironmentUI), "_unlockItemService").GetValue(ui) as UnlockItemService;
             if (unlocks == null || unlocks.Environment.GetLockState(target).IsLocked.CurrentValue) return false;
             if (!EnsureRendering() || !ReferenceEquals(ui, _rendering.EnvironmentUi)) return false;
-            if (!_state.HasVisual) _state.Seed(ReadLogical());
+            if (!_state.HasVisual)
+            {
+                var native = ReadLogical();
+                _state.Seed(native);
+                _daylight.Seed(native);
+            }
             if (_runtime.AutomaticApplyDepth == 0)
             {
                 _inputs = ModEnvironmentContext.Capture();
                 _policy = WeatherDebugControl.BuildPolicy();
-                _schedule = TimeTransitionSchedule.Resolve(_policy, _inputs);
+                _schedule = TimeTransitionSchedule.Resolve(_policy, _inputs, _continuous);
                 _state.Manual(env, _schedule, Time.realtimeSinceStartupAsDouble);
             }
             _inGameChange = _state.OwnsVisual;
@@ -163,6 +188,16 @@ namespace ChillWithYou.EnvSync.Core
         }
 
         internal void RestoreAtmosphereTime(object sphere) => _rendering?.RestoreAtmosphereTime(sphere);
+        internal void CompleteAtmosphere(object sphere)
+        {
+            if (_rendering == null || Blocked) return;
+            try { _rendering.CompleteAtmosphere(sphere); }
+            catch (Exception ex)
+            {
+                _rendering.RestoreAtmosphereTime(sphere);
+                Fail(ex.ToString());
+            }
+        }
 
         private bool EnsureRendering()
         {
@@ -198,7 +233,7 @@ namespace ChillWithYou.EnvSync.Core
                 // Apply the final short-transition frame before releasing, but never
                 // initialize presentation solely to discard an unowned snapshot.
                 if (_state.OwnsVisual || _rendering.IsBlending)
-                    _rendering.Apply(_state.Current, _state.Logical);
+                    _rendering.Apply(_state.Current, _state.Logical, _daylight.Current);
                 if (!_state.OwnsVisual) Release();
             }
             catch (Exception ex) { Fail(ex.ToString()); }
@@ -212,12 +247,16 @@ namespace ChillWithYou.EnvSync.Core
             UnavailableReason = reason;
             _state.Suspend();
             ChillEnvPlugin.Log?.LogWarning("[平滑时段] 当前场景使用原切换方式: " + reason);
+            if (_inputs != null && _policy != null && _policy.CanControlTime && !Blocked)
+                _runtime.TryApplyBaseImmediately(ModEnvironmentMap.ToGame(EnvironmentDecision.Resolve(_policy, _inputs).Base), _applyMode);
         }
 
         private void Release()
         {
             var rendering = _rendering;
             _rendering = null;
+            _daylight = new DaylightPresentation();
+            _alignmentRevision = 0;
             try { rendering?.Dispose(); }
             catch (Exception ex) { ChillEnvPlugin.Log?.LogDebug("[平滑时段] 清理已失效的场景资源: " + ex.Message); }
         }
@@ -226,6 +265,9 @@ namespace ChillWithYou.EnvSync.Core
         {
             Release();
             _state = new TimeTransitionState();
+            _daylight = new DaylightPresentation();
+            _alignmentRevision = 0;
+            _continuous = false;
             _unavailable = false;
             UnavailableReason = "";
             _inGameChange = false;

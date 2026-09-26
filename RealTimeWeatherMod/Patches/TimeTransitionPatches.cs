@@ -58,6 +58,13 @@ namespace ChillWithYou.EnvSync.Patches
             !GameEnvironmentRuntime.Shared.Transitions.HandleWindowChange(__instance, weatherAndTimeType);
     }
 
+    [HarmonyPatch(typeof(WindowViewService), nameof(WindowViewService.ActivateWindow))]
+    internal static class PrecipitationActivatePatch
+    {
+        private static void Prefix(WindowViewService __instance, WindowViewType viewType) =>
+            GameEnvironmentRuntime.Shared.Precipitation.PrepareActivation(__instance, viewType);
+    }
+
     [HarmonyPatch(typeof(RuntimeAPI), nameof(RuntimeAPI.SwitchLightmap))]
     internal static class SmoothLightmapSwitchPatch
     {
@@ -83,6 +90,9 @@ namespace ChillWithYou.EnvSync.Patches
     [HarmonyPatch(typeof(CozyWeather), nameof(CozyWeather.UpdateShaderVariables))]
     internal static class SmoothAtmospherePatch
     {
+        private static void Postfix(CozyWeather __instance) =>
+            GameEnvironmentRuntime.Shared.Transitions.CompleteAtmosphere(__instance);
+
         private static void Prefix(CozyWeather __instance) =>
             GameEnvironmentRuntime.Shared.Transitions.ApplyAtmosphere(__instance);
 

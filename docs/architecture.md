@@ -60,6 +60,10 @@ csproj 中显式列出。
   的期望值都从同一个调用取基础环境与降水景色。它用 mod 自有的 `ModEnvironment`
   枚举表达结果，与游戏 `EnvironmentType` 的转换只发生在 `ModEnvironmentMap`——这正是它能脱离
   Unity 被测试的原因。新增或修改天气 code 分类规则只改这一个文件。
+  决策同时按规范化天气代码提供 `WeatherVisual` 的云量、室内减光和雾感目标；可用的平滑表现选择时间底色，关闭或不兼容时使用原有 Cloudy 替换。Open-Meteo 的云天等级与雾代码先在源 Adapter 中规范化。
+  `DaylightSchedule` 按绝对时刻计算太阳轨道相位、白天与黄昏进度及跨午夜的深夜亮度曲线，`DaylightPresentation` 分别维护时间对齐和三个天气通道的淡入淡出；室内减光作用于实时主光、太阳阴影和工作后处理配置，雾感只额外控制天气过滤与雾密度，不将第三套光照贴图叠到时段混合上；
+  决策另按天气代码给出 `PrecipitationVisual` 雨量与雷电权重（只需天气同步）；`PrecipitationPresentation` 负责 6 秒淡入淡出，Unity 侧 `PrecipitationController` 只缩放原生雨景实例的粒子参数，窗景选择仍由 `Scenery` 决定。
+  `TimeTransitionController` 统一管理接管与释放，COZY、灯光和后处理写入仍留在渲染适配器中。太阳的世界空间方向由场景正午主光标定，天空圆盘与室内投影共用该方向，地平线下保留无太阳阴影的晨昏及夜间补光。COZY 雾层、云层通过可恢复的 Renderer 属性块保留原生黄昏的晚霞构图，完整黄昏达到原生亮度峰值。
 - `ModEnvironmentContext.Capture()` 是入口级读取，不是访问器：每轮同步/规则求值只调用一次，
   把得到的 `EnvironmentInputSnapshot` 沿调用链传下去。逐条规则各自 Capture 会让真实时钟在中途
   推进，同一轮里的规则可能对「现在」产生分歧。天气获取完成后，`WeatherSyncModule` 通过

@@ -32,6 +32,82 @@ namespace ChillWithYou.EnvSync.Core
         private static int _frames, _over50ms, _gcStart;
         private static double _frameTotal, _frameMax, _measureAfter;
 
+        private static DebugPlayback _manualPlayback;
+        private static EnvironmentType? _previewBase;
+        private static readonly Dictionary<EnvironmentType, bool> _previewScenery = new Dictionary<EnvironmentType, bool>();
+        internal static bool ManualPreviewActive => Playback != null && Playback == _manualPlayback;
+
+        internal static void StartManualPreview()
+        {
+            if (!IsConfigurationReady() || !ChillEnvPlugin.Cfg_DebugMode.Value || ManualPreviewActive) return;
+            var runtime = GameEnvironmentRuntime.Shared;
+            _previewBase = null;
+            foreach (var env in BaseEnvironments)
+                if (runtime.TryIsWindowActive(env, out bool active) && active) { _previewBase = env; break; }
+            _previewScenery.Clear();
+            foreach (var env in SceneryWeathers)
+                if (runtime.TryIsWindowActive(env, out bool active)) _previewScenery[env] = active;
+            var input = ModEnvironmentContext.Capture();
+            var now = input.Now;
+            input = input.WithWeather(PreviewWeather(false, input.Weather?.Temperature ?? 20));
+            input.IsDebug = true;
+            input.ConfigurationValid = true;
+            input.ConfigurationError = null;
+            input.Now = now.Date;
+            input.Sunrise = TimeSpan.FromHours(6.5);
+            input.Sunset = TimeSpan.FromHours(18.5);
+            Playback = _manualPlayback = new DebugPlayback(input, now.Date.AddDays(1), 0, true,
+                Time.realtimeSinceStartupAsDouble);
+            Playback.Seek(now, Time.realtimeSinceStartupAsDouble);
+            _testCycle = true;
+            GameEnvironmentRuntime.Shared.Transitions.Dispose();
+            TriggerImmediateApplication();
+        }
+
+        internal static void SetManualPreview(int minute, bool cloudy)
+            => SetManualWeatherPreview(minute, cloudy ? 9 : 1);
+
+        internal static void SetManualWeatherPreview(int minute, int weatherCode)
+        {
+            if (!ManualPreviewActive) return;
+            minute = Math.Max(0, Math.Min(1439, minute));
+            var time = Playback.Inputs.Now.Date.AddMinutes(minute);
+            if (Playback.Now(Time.realtimeSinceStartupAsDouble) != time)
+                Playback.Seek(time, Time.realtimeSinceStartupAsDouble);
+            Playback.Inputs.Weather = new Models.WeatherInfo { Code = weatherCode,
+                Temperature = Playback.Inputs.Weather.Temperature, Text = "Weather preview",
+                Condition = Models.WeatherConditionMapper.FromSeniverseCode(weatherCode) };
+            // GUI input arrives after Update; present this seek without waiting for the next tick.
+            GameEnvironmentRuntime.Shared.Transitions.Tick(BuildPolicy(), ModEnvironmentContext.Capture());
+            TriggerImmediateApplication();
+        }
+
+        private static Models.WeatherInfo PreviewWeather(bool cloudy, int temperature) =>
+            new Models.WeatherInfo { Code = cloudy ? 9 : 1, Temperature = temperature,
+                Text = cloudy ? "Cloudy preview" : "Clear preview",
+                Condition = Models.WeatherConditionMapper.FromSeniverseCode(cloudy ? 9 : 1) };
+
+        internal static void StopManualPreview()
+        {
+            if (!ManualPreviewActive) return;
+            StopPlayback();
+            _manualPlayback = null;
+            var runtime = GameEnvironmentRuntime.Shared;
+            runtime.Precipitation.Release();
+            // Disabled sync channels cannot restore the scene through the normal sync request.
+            if (!ChillEnvPlugin.IsInCutscene() && !SceneryAutomationSystem.IsWhaleSystemTriggered)
+            {
+                if (!ChillEnvPlugin.Cfg_EnableTimeSync.Value && _previewBase.HasValue)
+                    runtime.TryApplyBaseImmediately(_previewBase.Value, EnvironmentApplyMode.Interactive);
+                if (!ChillEnvPlugin.Cfg_EnableWeatherSync.Value)
+                    foreach (var pair in _previewScenery)
+                        runtime.TryApplySceneryState(pair.Key, pair.Value, EnvironmentApplyMode.Interactive);
+            }
+            _previewBase = null;
+            _previewScenery.Clear();
+            TriggerImmediateApplication();
+        }
+
         public static string ControlPlayback(string json)
         {
             if (!IsConfigurationReady()) return SerializeError("Mod 配置尚未初始化");
@@ -225,7 +301,7 @@ namespace ChillWithYou.EnvSync.Core
             SyncPolicySnapshot policy = BuildPolicy();
             // Expected state resolves through the same module the runner applies
             // from, so this check can never validate against a stale copy of the rule.
-            EnvironmentDecisionResult decision = EnvironmentDecision.Resolve(policy, inputs);
+            EnvironmentDecisionResult decision = EnvironmentDecision.Resolve(policy, inputs, GameEnvironmentRuntime.Shared.Transitions.UsesContinuousPresentation);
             EnvironmentType? expectedBase = policy.CanControlTime
                 ? ModEnvironmentMap.ToGame(decision.Base)
                 : (EnvironmentType?)null;
@@ -309,6 +385,22 @@ namespace ChillWithYou.EnvSync.Core
                 transitionProgress = GameEnvironmentRuntime.Shared.Transitions.Current.Amount,
                 transitionManualUntil = GameEnvironmentRuntime.Shared.Transitions.ManualUntil?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
                 transitionUnavailableReason = GameEnvironmentRuntime.Shared.Transitions.UnavailableReason,
+                continuousPresentation = GameEnvironmentRuntime.Shared.Transitions.UsesContinuousPresentation,
+                presentationOwned = GameEnvironmentRuntime.Shared.Transitions.OwnsPresentation,
+                daylightProgress = GameEnvironmentRuntime.Shared.Transitions.Daylight.Progress,
+                daylightStrength = GameEnvironmentRuntime.Shared.Transitions.Daylight.Strength,
+                solarPhase = GameEnvironmentRuntime.Shared.Transitions.Daylight.SolarPhase,
+                targetCloudWeight = GameEnvironmentRuntime.Shared.Transitions.DaylightTarget.Clouds,
+                actualCloudWeight = GameEnvironmentRuntime.Shared.Transitions.Daylight.Clouds,
+                targetDimming = GameEnvironmentRuntime.Shared.Transitions.DaylightTarget.Weather.Dimming,
+                actualDimming = GameEnvironmentRuntime.Shared.Transitions.Daylight.Weather.Dimming,
+                targetFog = GameEnvironmentRuntime.Shared.Transitions.DaylightTarget.Weather.Fog,
+                actualFog = GameEnvironmentRuntime.Shared.Transitions.Daylight.Weather.Fog,
+                targetRain = GameEnvironmentRuntime.Shared.Precipitation.Target.Rain,
+                actualRain = GameEnvironmentRuntime.Shared.Precipitation.Current.Rain,
+                targetThunder = GameEnvironmentRuntime.Shared.Precipitation.Target.Thunder,
+                actualThunder = GameEnvironmentRuntime.Shared.Precipitation.Current.Thunder,
+                rainFadingOut = GameEnvironmentRuntime.Shared.Precipitation.FadingOut?.ToString() ?? "",
                 matchesExpected = inputs.ConfigurationValid &&
                     runtimeReady &&
                     actualStateReadable &&
@@ -450,6 +542,22 @@ namespace ChillWithYou.EnvSync.Core
             public bool whaleOverrideActive;
             public bool matchesExpected;
             public bool smoothTransitionsEnabled;
+            public bool continuousPresentation;
+            public bool presentationOwned;
+            public float daylightProgress;
+            public float daylightStrength;
+            public float solarPhase;
+            public float targetCloudWeight;
+            public float actualCloudWeight;
+            public float targetDimming;
+            public float actualDimming;
+            public float targetFog;
+            public float actualFog;
+            public float targetRain;
+            public float actualRain;
+            public float targetThunder;
+            public float actualThunder;
+            public string rainFadingOut;
             public string transitionMode;
             public string transitionFrom;
             public string transitionTo;

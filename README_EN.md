@@ -273,7 +273,7 @@ Plugin auto switches environment by configured sunrise/sunset:
 | ☁️ Cloudy (Cloudy) | — | Sunrise -> 30 min after sunset |
 | 🌙 Night (Night) | 30 min after sunset -> sunrise | 30 min after sunset -> sunrise |
 
-> 💡 The Cloudy override requires both time sync and weather sync. Weather sync alone does not change the base time-of-day environment. In severe weather, daytime and sunset periods are unified as Cloudy, so sunset effect is skipped. Night is unaffected by weather and always starts exactly 30 minutes after sunset.
+> 💡 The table describes discrete behavior when smooth transitions are disabled or unavailable. The Cloudy override requires both time and weather sync. With smooth transitions enabled, graded clouds and fog overlay each time period while preserving sunset colors; sunlight and rain intensity vary continuously. Dawn, evening fade, full sunset and nightfall last 120/60/40/75 minutes respectively; manual transitions take 2 seconds and rain intensity fades over 6 seconds. Weather sync alone keeps the base time period unchanged and can still use continuous rain. See [smooth time transitions](docs/smooth-time-transitions.md) (Chinese).
 
 4. Severe weather codes:
 

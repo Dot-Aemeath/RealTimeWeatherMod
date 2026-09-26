@@ -40,15 +40,15 @@ namespace RealTimeWeatherMod.Tests.Services
         }
 
         [Theory]
-        [InlineData(1)]
-        [InlineData(2)]
-        [InlineData(3)]
-        public void Map_PartlyCloudyCodes_ReturnCloudy(int weatherCode)
+        [InlineData(1, 5, "Partly Cloudy")]
+        [InlineData(2, 4, "Cloudy")]
+        [InlineData(3, 9, "Overcast")]
+        public void Map_SkyCodes_PreserveCloudinessGrade(int weatherCode, int expected, string text)
         {
             var info = Map(weatherCode);
 
-            Assert.Equal(4, info.Code);
-            Assert.Equal("Cloudy", info.Text);
+            Assert.Equal(expected, info.Code);
+            Assert.Equal(text, info.Text);
             Assert.Equal(WeatherCondition.Cloudy, info.Condition);
         }
 
@@ -59,7 +59,7 @@ namespace RealTimeWeatherMod.Tests.Services
         {
             var info = Map(weatherCode);
 
-            Assert.Equal(26, info.Code);
+            Assert.Equal(30, info.Code);
             Assert.Equal("Fog", info.Text);
             Assert.Equal(WeatherCondition.Foggy, info.Condition);
         }
@@ -171,12 +171,12 @@ namespace RealTimeWeatherMod.Tests.Services
         }
 
         [Fact]
-        public void Map_ClearCodeWithExtremeCloudCover_ReturnsCloudy()
+        public void Map_ClearCodeWithExtremeCloudCover_ReturnsOvercast()
         {
             var info = Map(weatherCode: 0, cloudCover: 999d);
 
-            Assert.Equal(4, info.Code);
-            Assert.Equal("Cloudy", info.Text);
+            Assert.Equal(9, info.Code);
+            Assert.Equal("Overcast", info.Text);
         }
 
         [Fact]

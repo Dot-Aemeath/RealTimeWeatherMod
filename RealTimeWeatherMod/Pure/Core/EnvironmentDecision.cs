@@ -21,14 +21,20 @@ namespace ChillWithYou.EnvSync.Core
 
     internal struct EnvironmentDecisionResult
     {
-        internal EnvironmentDecisionResult(ModEnvironment baseEnvironment, ModEnvironment? scenery)
+        internal EnvironmentDecisionResult(ModEnvironment baseEnvironment, ModEnvironment? scenery, WeatherVisual weather,
+            PrecipitationVisual precipitation)
         {
             Base = baseEnvironment;
             Scenery = scenery;
+            Weather = weather;
+            Precipitation = precipitation;
         }
 
         internal ModEnvironment Base { get; }
         internal ModEnvironment? Scenery { get; }
+        internal bool Clouds => Weather.Clouds > 0;
+        internal WeatherVisual Weather { get; }
+        internal PrecipitationVisual Precipitation { get; }
     }
 
     /// <summary>
@@ -41,7 +47,7 @@ namespace ChillWithYou.EnvSync.Core
     {
         internal static EnvironmentDecisionResult Resolve(
             SyncPolicySnapshot policy,
-            EnvironmentInputSnapshot inputs)
+            EnvironmentInputSnapshot inputs, bool independentClouds = false)
         {
             WeatherInfo weather = inputs == null ? null : inputs.Weather;
             DebugTimeSegment segment = inputs == null
@@ -49,8 +55,12 @@ namespace ChillWithYou.EnvSync.Core
                 : inputs.TimeSegment;
 
             return new EnvironmentDecisionResult(
-                ResolveBase(policy, segment, weather),
-                ResolveScenery(policy, weather));
+                independentClouds ? ResolveTimeBase(segment) : ResolveBase(policy, segment, weather),
+                ResolveScenery(policy, weather),
+                policy != null && policy.CanApplyCloudyOverride && weather != null && IsBadWeather(weather.Code)
+                    ? ResolveWeatherVisual(weather.Code) : default,
+                policy != null && policy.CanControlWeather && weather != null
+                    ? PrecipitationVisual.Resolve(weather.Code) : default);
         }
 
         private static ModEnvironment ResolveBase(
@@ -132,6 +142,28 @@ namespace ChillWithYou.EnvSync.Core
             }
 
             return false;
+        }
+
+        private static WeatherVisual ResolveWeatherVisual(int code)
+        {
+            // Seniverse categories select visual grades. Keep the legacy trigger
+            // exceptions above; cloud cover, room dimming and visibility differ.
+            switch (code)
+            {
+                case 4: return new WeatherVisual(.4f, .3f, 0);
+                case 7: case 8: return new WeatherVisual(.65f, .5f, 0);
+                case 9: return new WeatherVisual(.9f, .75f, 0);
+                case 14: case 19: case 20: case 23: return new WeatherVisual(.8f, .65f, 0);
+                case 11: case 12: case 15: case 24: return new WeatherVisual(.95f, .85f, .1f);
+                case 16: case 17: case 18: case 25:
+                case 34: case 35: case 36: return new WeatherVisual(1, 1, .15f);
+                case 26: return new WeatherVisual(.55f, .5f, .35f);
+                case 27: return new WeatherVisual(.7f, .65f, .5f);
+                case 28: case 29: return new WeatherVisual(.9f, .9f, .75f);
+                case 30: return new WeatherVisual(.6f, .65f, .45f);
+                case 31: return new WeatherVisual(.65f, .7f, .6f);
+                default: return default;
+            }
         }
     }
 }

@@ -22,16 +22,16 @@ public class TimeTransitionTests
     }
 
     [Theory]
-    [InlineData("05:50", "Night", "Day", 0f)]
-    [InlineData("06:20", "Night", "Day", .5f)]
-    [InlineData("06:30", "Night", "Day", .7407407f)]
-    [InlineData("06:50", "Night", "Day", 1f)]
-    [InlineData("17:55", "Day", "Sunset", 0f)]
-    [InlineData("18:05", "Day", "Sunset", .5f)]
+    [InlineData("05:15", "Night", "Day", 0f)]
+    [InlineData("06:15", "Night", "Day", .5f)]
+    [InlineData("06:30", "Night", "Day", .68359375f)]
+    [InlineData("07:15", "Night", "Day", 1f)]
+    [InlineData("17:15", "Day", "Sunset", 0f)]
+    [InlineData("17:45", "Day", "Sunset", .5f)]
     [InlineData("18:15", "Day", "Sunset", 1f)]
-    [InlineData("18:35", "Sunset", "Night", 0f)]
-    [InlineData("18:50", "Sunset", "Night", .5f)]
-    [InlineData("19:05", "Sunset", "Night", 1f)]
+    [InlineData("18:55", "Sunset", "Night", 0f)]
+    [InlineData("19:32:30", "Sunset", "Night", .5f)]
+    [InlineData("20:10", "Sunset", "Night", 1f)]
     public void ScheduledBoundaries(string time, string from, string to, float progress)
     {
         var result = TimeTransitionSchedule.Resolve(Policy, Inputs(time));
@@ -60,12 +60,12 @@ public class TimeTransitionTests
     {
         var result = TimeTransitionSchedule.Resolve(Policy, Inputs("23:59", 0, "00:03", "18:30"));
         Assert.Equal(new DateTime(2026, 9, 19, 0, 3, 0), result.Boundary);
-        Assert.Equal(.648f, result.Visual.Amount, 5);
+        Assert.Equal(.6359595f, result.Visual.Amount, 5);
         var afterMidnight = TimeTransitionSchedule.Resolve(Policy, Inputs("00:04", 0, "00:03", "18:30"));
         Assert.Equal(new DateTime(2026, 9, 18, 0, 3, 0), afterMidnight.Boundary);
-        Assert.InRange(afterMidnight.Visual.Amount, .76f, .77f);
+        Assert.InRange(afterMidnight.Visual.Amount, .69f, .70f);
         var next = TimeTransitionSchedule.Resolve(Policy, Inputs("23:00"));
-        Assert.Equal(new DateTime(2026, 9, 19, 5, 50, 0), next.NextWindowStart);
+        Assert.Equal(new DateTime(2026, 9, 19, 5, 15, 0), next.NextWindowStart);
     }
 
     [Theory]
@@ -178,10 +178,10 @@ public class TimeTransitionTests
         Tick(state, "17:00:34", 34);
         Assert.True(state.SuppressAutomatic);
         Assert.Equal(1, state.Current.Weight(ModEnvironment.Night));
-        Tick(state, "17:55:00", 3300);
+        Tick(state, "17:15:00", 900);
         Assert.False(state.SuppressAutomatic);
         Assert.Equal(1, state.Current.Weight(ModEnvironment.Night));
-        Tick(state, "17:55:02", 3302);
+        Tick(state, "17:15:02", 902);
         Assert.True(state.Current.Weight(ModEnvironment.Day) > .99f);
     }
 
@@ -291,10 +291,10 @@ public class TimeTransitionTests
     {
         var state = new TimeTransitionState();
         state.Seed(ModEnvironment.Day);
-        Tick(state, "18:05:00", 0, enabled: false);
-        Tick(state, "18:05:01", 1);
+        Tick(state, "17:45:00", 0, enabled: false);
+        Tick(state, "17:45:01", 1);
         Assert.Equal(1, state.Current.Weight(ModEnvironment.Day));
-        Tick(state, "18:05:03", 3);
+        Tick(state, "17:45:03", 3);
         Assert.InRange(state.Current.Weight(ModEnvironment.Sunset), .5f, .51f);
     }
 
@@ -313,12 +313,12 @@ public class TimeTransitionTests
     [Fact]
     public void FullSunsetHoldsBetweenTheTwoEveningWindows()
     {
-        foreach (var time in new[] { "18:15:01", "18:25:00", "18:34:59" })
+        foreach (var time in new[] { "18:15:01", "18:25:00", "18:54:59" })
         {
             var result = TimeTransitionSchedule.Resolve(Policy, Inputs(time));
             Assert.Null(result.Boundary);
             Assert.Equal(1, result.Visual.Weight(ModEnvironment.Sunset));
-            Assert.Equal(DateTime.Parse("2026-09-18 18:35"), result.NextWindowStart);
+            Assert.Equal(DateTime.Parse("2026-09-18 18:55"), result.NextWindowStart);
         }
     }
 
@@ -326,8 +326,8 @@ public class TimeTransitionTests
     public void WindowSeekUsesActualDurationAndKeepsDiscreteAnchors()
     {
         var windows = TimeTransitionSchedule.Windows(new DateTime(2026, 9, 18), TimeSpan.FromHours(6.5), TimeSpan.FromHours(18.5));
-        Assert.Equal(new[] { 3600d, 1200d, 1800d }, windows.Select(w => w.DurationSeconds));
-        Assert.Equal(new[] { "06:20", "18:05", "18:50" }, windows.Select(w => w.AtProgress(.5).ToString("HH:mm")));
+        Assert.Equal(new[] { 7200d, 3600d, 4500d }, windows.Select(w => w.DurationSeconds));
+        Assert.Equal(new[] { "06:15", "17:45", "19:32" }, windows.Select(w => w.AtProgress(.5).ToString("HH:mm")));
         Assert.Equal(new[] { "06:30", "18:00", "19:00" }, windows.Select(w => w.Boundary.ToString("HH:mm")));
         foreach (var window in windows)
         {

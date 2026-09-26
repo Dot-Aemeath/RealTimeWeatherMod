@@ -56,14 +56,16 @@ namespace ChillWithYou.EnvSync.Services
 
             if (weatherCode == 45 || weatherCode == 48)
             {
-                return 26;
+                return 30;
             }
 
-            // Codes 1-3 (partly cloudy/overcast) or clear sky with high measured cloud cover → Cloudy
-            if ((weatherCode >= 1 && weatherCode <= 3) || cloudCover >= 65d)
-            {
-                return 4;
-            }
+            // Preserve the WMO sky categories in the Seniverse code space so
+            // continuous presentation can distinguish overcast from partly cloudy.
+            if (weatherCode == 3) return 9;
+            if (weatherCode == 2) return 4;
+            if (weatherCode == 1) return 5;
+            if (cloudCover >= 90d) return 9;
+            if (cloudCover >= 65d) return 4;
 
             return 1;
         }
@@ -117,7 +119,9 @@ namespace ChillWithYou.EnvSync.Services
             if (normalizedCode == 11) return "ThunderRain";
             if (normalizedCode == 14) return "HeavyRain";
             if (normalizedCode == 13) return "LightRain";
-            if (normalizedCode == 26) return "Fog";
+            if (normalizedCode == 30) return "Fog";
+            if (normalizedCode == 9) return "Overcast";
+            if (normalizedCode == 5) return "Partly Cloudy";
             if (normalizedCode == 4) return "Cloudy";
             return weatherCode == 0 ? "Clear" : "Unknown";
         }

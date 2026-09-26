@@ -53,9 +53,11 @@ namespace ChillWithYou.EnvSync.Core
         private GameEnvironmentRuntime()
         {
             Transitions = new TimeTransitionController(this);
+            Precipitation = new PrecipitationController(this);
         }
 
         internal TimeTransitionController Transitions { get; }
+        internal PrecipitationController Precipitation { get; }
         internal int AutomaticApplyDepth { get; private set; }
 
         internal int RegisteredControllerCount
