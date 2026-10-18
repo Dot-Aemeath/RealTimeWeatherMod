@@ -155,25 +155,31 @@ namespace ChillWithYou.EnvSync.Core
             bool targetState,
             EnvironmentApplyMode mode)
         {
+            bool mutePrecipitation = IsPrecipitation(environmentType) &&
+                !(ChillEnvPlugin.Cfg_EnablePrecipitationSounds?.Value ?? true);
+            bool targetSoundState = targetState && !mutePrecipitation;
             if (TryGetController(environmentType, out var controller))
             {
-                if (TryIsControllerInTargetState(controller, targetState, out var isInTargetState))
+                if (TryIsControllerInTargetState(controller, targetState, targetSoundState, out var isInTargetState))
                 {
-                    if (isInTargetState || TrySetControllerCombinedState(controller, targetState))
+                    if (isInTargetState || TrySetControllerCombinedState(controller, targetState, targetSoundState))
                     {
                         return true;
                     }
                 }
 
-                if (mode == EnvironmentApplyMode.Interactive)
+                if (mode == EnvironmentApplyMode.Interactive && !mutePrecipitation)
                 {
                     return TrySimulateMainIconClick(environmentType);
                 }
             }
 
-            if (mode == EnvironmentApplyMode.EarlyStartup)
+            // The main icon toggles BOTH view and sound, so it cannot represent silent rain.
+            // Use the direct window path and reconcile live sound if a controller exists.
+            if (mode == EnvironmentApplyMode.EarlyStartup || mutePrecipitation)
             {
-                return TryApplySceneryStateDirect(environmentType, targetState);
+                return TryApplySceneryStateDirect(environmentType, targetState, targetSoundState) &&
+                    (!mutePrecipitation || TrySetAmbientSoundState(environmentType, false, out _));
             }
 
             if (TryIsWindowActive(environmentType, out var isActive) && isActive == targetState)
@@ -182,6 +188,13 @@ namespace ChillWithYou.EnvSync.Core
             }
 
             return TrySimulateMainIconClick(environmentType);
+        }
+
+        private static bool IsPrecipitation(EnvironmentType environmentType)
+        {
+            return environmentType == EnvironmentType.LightRain ||
+                environmentType == EnvironmentType.HeavyRain ||
+                environmentType == EnvironmentType.ThunderRain;
         }
 
         internal ModEnvironment? GetActiveRain()
@@ -535,7 +548,8 @@ namespace ChillWithYou.EnvSync.Core
             }
         }
 
-        private bool TryApplySceneryStateDirect(EnvironmentType environmentType, bool targetState)
+        private bool TryApplySceneryStateDirect(
+            EnvironmentType environmentType, bool targetState, bool targetSoundState)
         {
             if (!TryGetRuntimeServices(out _, out var windowViewService, out var environmentDataService) ||
                 !EnsureDirectSceneryMetadata(windowViewService, environmentDataService) ||
@@ -570,12 +584,12 @@ namespace ChillWithYou.EnvSync.Core
                     environmentType.ToString(),
                     out var ambientEnumValue) &&
                 TryGetDirectSoundActive(environmentDataService, ambientEnumValue, out var isSoundActive) &&
-                isSoundActive != targetState)
+                isSoundActive != targetSoundState)
             {
-                TryInvoke(
+                return TryInvoke(
                     _setMuteMethod,
                     environmentDataService,
-                    new object[] { ambientEnumValue, !targetState },
+                    new object[] { ambientEnumValue, !targetSoundState },
                     "[环境运行时] 启动期环境音状态写入失败");
             }
 
@@ -652,6 +666,7 @@ namespace ChillWithYou.EnvSync.Core
         private bool TryIsControllerInTargetState(
             EnvironmentController controller,
             bool targetState,
+            bool targetSoundState,
             out bool isInTargetState)
         {
             isInTargetState = false;
@@ -670,11 +685,13 @@ namespace ChillWithYou.EnvSync.Core
                 hasSound,
                 soundActive,
                 liveSoundActive,
-                targetState);
+                targetState,
+                targetSoundState);
             return true;
         }
 
-        private bool TrySetControllerCombinedState(EnvironmentController controller, bool targetState)
+        private bool TrySetControllerCombinedState(
+            EnvironmentController controller, bool targetState, bool targetSoundState)
         {
             if (!TryGetControllerCombinedState(
                     controller,
@@ -693,7 +710,7 @@ namespace ChillWithYou.EnvSync.Core
                 hasSound,
                 soundActive,
                 liveSoundActive,
-                targetState);
+                targetSoundState);
             if (!needsWindowChange && !needsSoundChange)
             {
                 return true;
@@ -705,7 +722,7 @@ namespace ChillWithYou.EnvSync.Core
             MethodInfo changeMuteMethod = needsSoundChange
                 ? AccessTools.Method(
                     controller.GetType(),
-                    targetState ? "MuteDeactivate" : "MuteActivate")
+                    targetSoundState ? "MuteDeactivate" : "MuteActivate")
                 : null;
             if ((needsWindowChange && changeWindowMethod == null) ||
                 (needsSoundChange && changeMuteMethod == null))
