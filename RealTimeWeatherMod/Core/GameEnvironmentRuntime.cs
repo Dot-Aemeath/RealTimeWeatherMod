@@ -190,6 +190,29 @@ namespace ChillWithYou.EnvSync.Core
             return TrySimulateMainIconClick(environmentType);
         }
 
+        internal void RefreshPrecipitationSounds()
+        {
+            if (!ChillEnvPlugin.Cfg_EnableWeatherSync.Value ||
+                ChillEnvPlugin.IsInCutscene() || SceneryAutomationSystem.IsWhaleSystemTriggered)
+            {
+                return;
+            }
+
+            bool soundsEnabled = ChillEnvPlugin.Cfg_EnablePrecipitationSounds.Value;
+            foreach (var environmentType in ModEnvironmentMap.SceneryEnvironments)
+            {
+                if (!IsPrecipitation(environmentType)) continue;
+
+                // Preserve the current view, including rain that is still fading out.
+                if (!TryGetController(environmentType, out var controller) ||
+                    !TryGetControllerCombinedState(controller, out var windowActive, out _, out _, out _) ||
+                    !TrySetControllerCombinedState(controller, windowActive, windowActive && soundsEnabled))
+                {
+                    ChillEnvPlugin.Log?.LogWarning($"[环境运行时] 无法立即更新降水声音: {environmentType}");
+                }
+            }
+        }
+
         private static bool IsPrecipitation(EnvironmentType environmentType)
         {
             return environmentType == EnvironmentType.LightRain ||

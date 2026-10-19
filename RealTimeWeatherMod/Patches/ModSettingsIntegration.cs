@@ -257,6 +257,7 @@ namespace ChillWithYou.EnvSync.Patches
                     {
                         ChillEnvPlugin.Cfg_EnablePrecipitationSounds.Value = value;
                         ChillEnvPlugin.Instance.Config.Save();
+                        Core.GameEnvironmentRuntime.Shared.RefreshPrecipitationSounds();
                     });
 
                 AddToggleSafe(managerInstance, managerType,
