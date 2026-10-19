@@ -105,12 +105,12 @@ jobs:
           OCR_LLM_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
           OCR_LLM_MODEL: deepseek-v4-pro
           OCR_USE_ANTHROPIC: 'false'
+          OCR_LLM_EXTRA_HEADERS: x-opencode-session=rtw-pr-${{ steps.pr-context.outputs.pr_number }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           if [ -z "$OCR_LLM_TOKEN" ]; then
             echo '::error::DEEPSEEK_API_KEY is not configured'
             exit 1
           fi
-          ocr llm test
           ocr review \
             --from "$BASE_SHA" \
             --to "$HEAD_SHA" \
