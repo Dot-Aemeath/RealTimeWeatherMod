@@ -129,12 +129,12 @@ jobs:
             if (!fs.existsSync('/tmp/ocr-result.json')) return;
             const result = JSON.parse(fs.readFileSync('/tmp/ocr-result.json', 'utf8'));
             // Report error categories without publishing raw provider responses or credentials.
-            const failures = [result.manifest?.run_failure,
-              ...(result.manifest?.coverage?.failed || []), ...(result.warnings || [])].filter(Boolean);
-            for (const failure of failures) {
-              const reason = String(failure.reason || failure.message || '');
-              const categories = reason.match(/unauthorized|forbidden|not found|invalid.{0,15}(?:key|model)|unsupported protocol|no such host|connection refused|timeout|rate limit|quota|insufficient|HTTP\s*\d{3}|status(?: code)?\s*[:=]?\s*\d{3}/gi) || [];
-              console.log(JSON.stringify({type: failure.type, classification: failure.classification, categories}));
+            console.log('Review status:', result.status);
+            for (const request of result.retry_report?.requests || []) {
+              for (const attempt of request.attempts || []) {
+                console.log(JSON.stringify({status: attempt.status_code,
+                  classification: attempt.error_class, phase: attempt.failure_phase}));
+              }
             }
 
       - name: Post review comments
