@@ -106,6 +106,10 @@ jobs:
           OCR_LLM_MODEL: deepseek-v4-pro
           OCR_USE_ANTHROPIC: 'false'
         run: |
+          if [ -z "$OCR_LLM_TOKEN" ]; then
+            echo '::error::DEEPSEEK_API_KEY is not configured'
+            exit 1
+          fi
           ocr review \
             --from "$BASE_SHA" \
             --to "$HEAD_SHA" \
@@ -115,6 +119,23 @@ jobs:
             --timeout 15 \
             --background "C# Unity BepInEx mod for Chill With You Lo-Fi Story. RealTimeWeatherMod/ (plugin: Core/automation, Patches/Harmony, Services/IO, Pure/Core+Services+Models/Unity-free logic), UnityExplorerMcp/ (MCP bridge), RealTimeWeatherMod.Tests/ and UnityExplorerMcp.Tests/ (xUnit .NET 9). Critical: Unity main thread safety, Harmony patch non-destructiveness, IDisposable cleanup, null safety, API key protection." \
             > /tmp/ocr-result.json
+
+      - name: Summarize review failure
+        if: ${{ failure() && steps.review.outcome == 'failure' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('/tmp/ocr-result.json')) return;
+            const result = JSON.parse(fs.readFileSync('/tmp/ocr-result.json', 'utf8'));
+            // Report error categories without publishing raw provider responses or credentials.
+            const failures = [result.manifest?.run_failure,
+              ...(result.manifest?.coverage?.failed || []), ...(result.warnings || [])].filter(Boolean);
+            for (const failure of failures) {
+              const reason = String(failure.reason || failure.message || '');
+              const categories = reason.match(/unauthorized|forbidden|not found|invalid.{0,15}(?:key|model)|unsupported protocol|no such host|connection refused|timeout|rate limit|quota|insufficient|HTTP\s*\d{3}|status(?: code)?\s*[:=]?\s*\d{3}/gi) || [];
+              console.log(JSON.stringify({type: failure.type, classification: failure.classification, categories}));
+            }
 
       - name: Post review comments
         uses: actions/github-script@v7
