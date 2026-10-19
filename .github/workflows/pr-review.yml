@@ -11,48 +11,81 @@
 name: PR Review
 
 concurrency:
-  group: pr-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: pr-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
   cancel-in-progress: true
 
 on:
   pull_request_target:
-    types: [opened]
+    types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: number
 
 permissions:
   contents: read
   pull-requests: write
+  statuses: write
 
 jobs:
   review:
     if: |
       (github.event_name == 'pull_request_target') ||
+      (github.event_name == 'workflow_dispatch') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/review'))
     runs-on: ubuntu-latest
     steps:
-      - name: Get PR context (for comment triggers)
+      - name: Get PR context
         id: pr-context
-        if: github.event_name != 'pull_request_target'
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
         with:
           script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+              throw new Error('Invalid pull request number');
+            }
             const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number
+              pull_number: prNumber
             });
-            core.setOutput('base_ref', pullRequest.base.ref);
+            if (pullRequest.state !== 'open') {
+              throw new Error('Pull request is not open');
+            }
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('base_sha', pullRequest.base.sha);
             core.setOutput('head_sha', pullRequest.head.sha);
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: pullRequest.head.sha,
+              state: 'pending',
+              context: 'PR Review',
+              description: 'Reviewing this pull request commit',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
 
-      - name: Checkout repository
+      # Keep all executable code and reviewer configuration on the trusted base.
+      # OCR reads the PR through --to; fetching objects does not check out fork files.
+      - name: Checkout base repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || steps.pr-context.outputs.head_sha }}
+          ref: ${{ steps.pr-context.outputs.base_sha }}
+          persist-credentials: false
 
-      - name: Fetch PR head ref
-        run: git fetch origin pull/${{ github.event.pull_request.number || github.event.issue.number }}/head
+      - name: Fetch PR objects
+        env:
+          PR_NUMBER: ${{ steps.pr-context.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr-context.outputs.head_sha }}
+        run: |
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,45 +95,32 @@ jobs:
       - name: Install OpenCodeReview
         run: npm install -g @alibaba-group/open-code-review
 
-      - name: Configure OCR
-        run: |
-          ocr config set llm.url https://opencode.ai/zen/go/v1
-          ocr config set llm.auth_token ${{ secrets.DEEPSEEK_API_KEY }}
-          ocr config set llm.model deepseek-v4-pro
-          ocr config set llm.use_anthropic false
-
       - name: Run review
         id: review
         timeout-minutes: 20
+        env:
+          BASE_SHA: ${{ steps.pr-context.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr-context.outputs.head_sha }}
+          OCR_LLM_URL: https://opencode.ai/zen/go/v1
+          OCR_LLM_TOKEN: ${{ secrets.DEEPSEEK_API_KEY }}
+          OCR_LLM_MODEL: deepseek-v4-pro
+          OCR_USE_ANTHROPIC: 'false'
         run: |
-          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
-            BASE_REF="${{ github.event.pull_request.base.ref }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          else
-            BASE_REF="${{ steps.pr-context.outputs.base_ref }}"
-            HEAD_SHA="${{ steps.pr-context.outputs.head_sha }}"
-          fi
-
-          echo "Reviewing PR: ${HEAD_SHA} against origin/${BASE_REF}"
-
           ocr review \
-            --from "origin/${BASE_REF}" \
-            --to "${HEAD_SHA}" \
+            --from "$BASE_SHA" \
+            --to "$HEAD_SHA" \
             --audience agent \
             --format json \
             --concurrency 2 \
             --timeout 15 \
             --background "C# Unity BepInEx mod for Chill With You Lo-Fi Story. RealTimeWeatherMod/ (plugin: Core/automation, Patches/Harmony, Services/IO, Pure/Core+Services+Models/Unity-free logic), UnityExplorerMcp/ (MCP bridge), RealTimeWeatherMod.Tests/ and UnityExplorerMcp.Tests/ (xUnit .NET 9). Critical: Unity main thread safety, Harmony patch non-destructiveness, IDisposable cleanup, null safety, API key protection." \
-            > /tmp/ocr-result.json 2>/tmp/ocr-stderr.log || true
-
-      - name: Dump review output
-        if: always()
-        run: |
-          echo "=== STDOUT ===" && cat /tmp/ocr-result.json || echo "(empty)"
-          echo "=== STDERR ===" && cat /tmp/ocr-stderr.log || echo "(empty)"
+            > /tmp/ocr-result.json
 
       - name: Post review comments
         uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr-context.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr-context.outputs.head_sha }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -111,21 +131,25 @@ jobs:
               const raw = fs.readFileSync('/tmp/ocr-result.json', 'utf8');
               result = JSON.parse(raw);
             } catch (e) {
-              console.log('Failed to parse OCR output:', e.message);
-              const stderr = fs.existsSync('/tmp/ocr-stderr.log')
-                ? fs.readFileSync('/tmp/ocr-stderr.log', 'utf8').trim()
-                : '';
-              if (stderr) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body: `⚠️ **OpenCodeReview** encountered an error:\n${fencedBlock(stderr)}`
-                });
-              }
+              core.setFailed('Failed to parse OCR output: ' + e.message);
               return;
             }
 
+            if (!result || !['success', 'complete', 'skipped'].includes(result.status) ||
+                (result.comments !== null && !Array.isArray(result.comments))) {
+              core.setFailed('OCR did not return a complete review');
+              return;
+            }
+            const prNumber = Number(process.env.PR_NUMBER);
+            const commitSha = process.env.HEAD_SHA;
+            const { data: currentPr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber
+            });
+            if (currentPr.head.sha !== commitSha) {
+              core.setFailed('PR head changed during review; review the new commit');
+              return;
+            }
             const comments = result.comments || [];
             const warnings = result.warnings || [];
 
@@ -134,23 +158,10 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: prNumber,
                 body: `✅ **OpenCodeReview**: ${message}`
               });
               return;
-            }
-
-            const prNumber = context.issue.number;
-            let commitSha;
-            if (context.eventName === 'pull_request_target') {
-              commitSha = context.payload.pull_request.head.sha;
-            } else {
-              const { data: pr } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber
-              });
-              commitSha = pr.head.sha;
             }
 
             const reviewComments = [];
@@ -286,3 +297,21 @@ jobs:
               const fence = '`'.repeat(maxTicks);
               return fence + language + '\n' + text + (text.endsWith('\n') ? '' : '\n') + fence;
             }
+
+      - name: Publish review status
+        if: ${{ always() && steps.pr-context.outputs.head_sha != '' }}
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.pr-context.outputs.head_sha }}
+          REVIEW_STATUS: ${{ job.status }}
+        with:
+          script: |
+            const succeeded = process.env.REVIEW_STATUS === 'success';
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.HEAD_SHA,
+              state: succeeded ? 'success' : 'failure',
+              context: 'PR Review',
+              description: succeeded ? 'Review completed' : 'Review did not complete successfully',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
