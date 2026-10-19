@@ -110,6 +110,7 @@ jobs:
             echo '::error::DEEPSEEK_API_KEY is not configured'
             exit 1
           fi
+          ocr llm test
           ocr review \
             --from "$BASE_SHA" \
             --to "$HEAD_SHA" \
