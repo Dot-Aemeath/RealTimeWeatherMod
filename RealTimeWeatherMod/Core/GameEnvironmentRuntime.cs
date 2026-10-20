@@ -153,9 +153,10 @@ namespace ChillWithYou.EnvSync.Core
         internal bool TryApplySceneryState(
             EnvironmentType environmentType,
             bool targetState,
-            EnvironmentApplyMode mode)
+            EnvironmentApplyMode mode,
+            bool applyPrecipitationSoundSetting = true)
         {
-            bool mutePrecipitation = IsPrecipitation(environmentType) &&
+            bool mutePrecipitation = applyPrecipitationSoundSetting && IsPrecipitation(environmentType) &&
                 !(ChillEnvPlugin.Cfg_EnablePrecipitationSounds?.Value ?? true);
             bool targetSoundState = targetState && !mutePrecipitation;
             if (TryGetController(environmentType, out var controller))
@@ -178,8 +179,9 @@ namespace ChillWithYou.EnvSync.Core
             // Use the direct window path and reconcile live sound if a controller exists.
             if (mode == EnvironmentApplyMode.EarlyStartup || mutePrecipitation)
             {
-                return TryApplySceneryStateDirect(environmentType, targetState, targetSoundState) &&
-                    (!mutePrecipitation || TrySetAmbientSoundState(environmentType, false, out _));
+                bool windowApplied = TryApplySceneryStateDirect(environmentType, targetState, targetSoundState);
+                bool soundApplied = !mutePrecipitation || TrySetAmbientSoundState(environmentType, false, out _);
+                return windowApplied && soundApplied;
             }
 
             if (TryIsWindowActive(environmentType, out var isActive) && isActive == targetState)
@@ -204,12 +206,20 @@ namespace ChillWithYou.EnvSync.Core
                 if (!IsPrecipitation(environmentType)) continue;
 
                 // Preserve the current view, including rain that is still fading out.
-                if (!TryGetController(environmentType, out var controller) ||
-                    !TryGetControllerCombinedState(controller, out var windowActive, out _, out _, out _) ||
-                    !TrySetControllerCombinedState(controller, windowActive, windowActive && soundsEnabled))
+                if (TryGetController(environmentType, out var controller) &&
+                    TryGetControllerCombinedState(controller, out var windowActive, out _, out _, out _) &&
+                    TrySetControllerCombinedState(controller, windowActive, windowActive && soundsEnabled))
                 {
-                    ChillEnvPlugin.Log?.LogWarning($"[环境运行时] 无法立即更新降水声音: {environmentType}");
+                    continue;
                 }
+
+                if (TryIsWindowActive(environmentType, out var fallbackWindowActive) &&
+                    TrySetAmbientSoundState(environmentType, fallbackWindowActive && soundsEnabled, out _))
+                {
+                    continue;
+                }
+
+                ChillEnvPlugin.Log?.LogWarning($"[环境运行时] 无法立即更新降水声音: {environmentType}");
             }
         }
 
@@ -809,7 +819,11 @@ namespace ChillWithYou.EnvSync.Core
                 FieldInfo ambientBehaviorField = AccessTools.Field(
                     controller.GetType(),
                     "_ambientSoundBehavior");
-                object ambientBehavior = ambientBehaviorField?.GetValue(controller);
+                if (ambientBehaviorField == null)
+                {
+                    return false;
+                }
+                object ambientBehavior = ambientBehaviorField.GetValue(controller);
                 hasSound = ambientBehavior != null;
                 if (!hasSound)
                 {
